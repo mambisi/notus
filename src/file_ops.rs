@@ -1,11 +1,11 @@
 use std::path::{Path, PathBuf};
 use chrono::Utc;
 use std::fs::{OpenOptions, File};
-use std::io::{Result, BufReader, Seek, SeekFrom, BufWriter, Write};
+use std::io::{BufReader, Seek, SeekFrom, BufWriter, Write};
 use fs_extra::dir::DirOptions;
 use std::collections::BTreeMap;
-use std::ffi::OsStr;
-use anyhow::{bail, Error};
+use anyhow::bail;
+
 use crate::schema::{HintEntry, DataEntry, Decoder, Encoder};
 use crate::datastore::{KeyDirEntry, KeysDir};
 
@@ -30,15 +30,18 @@ impl FilePair {
 }
 
 impl FilePair {
-    pub fn read_data_entry(&self, entry_position: u64) -> anyhow::Result<DataEntry> {
+    pub fn read(&self, entry_position: u64) -> anyhow::Result<DataEntry> {
         let data_file = File::open(&self.data_file_path.as_path())?;
         let mut reader = BufReader::new(data_file);
         reader.seek(SeekFrom::Start(entry_position))?;
         let data_entry = DataEntry::decode(&mut reader)?;
+        if !data_entry.check_crc() {
+            bail!("Corrupt data")
+        }
         Ok(data_entry)
     }
 
-    pub fn write_data_entry(&self, entry: &DataEntry) -> anyhow::Result<KeyDirEntry> {
+    pub fn write(&self, entry: &DataEntry) -> anyhow::Result<KeyDirEntry> {
         //Appends entry to data file
         let data_file = OpenOptions::new().write(true).open(&self.data_file_path.as_path())?;
         let mut dfw = BufWriter::new(data_file);
@@ -60,21 +63,23 @@ impl FilePair {
                             data_entry_position))
     }
 
+    pub fn remove(&self, key : Vec<u8>) -> anyhow::Result<()> {
+        //Append hint to hint file
+        let hint_entry = HintEntry::tombstone(key);
+        let hint_file = OpenOptions::new().write(true).open(&self.hint_file_path.as_path())?;
+        let mut hfw = BufWriter::new(hint_file);
+        hfw.seek(SeekFrom::End(0))?;
+        hfw.write_all(&hint_entry.encode())?;
+        hfw.flush();
+        Ok(())
+    }
+
     pub fn fetch_hint_entries(&self, keys_dir : &mut KeysDir) -> anyhow::Result<()>{
         let hint_file = File::open(&self.hint_file_path.as_path())?;
         let mut rdr = BufReader::new(hint_file);
-        loop {
-            let hint_entry = match HintEntry::decode(&mut rdr) {
-                Ok(hint) => {
-                    hint
-                }
-                Err(_) => {
-                    //Todo Check for EOF
-                    break
-                }
-            };
+        while let Ok(hint_entry) = HintEntry::decode(&mut rdr) {
             if hint_entry.is_deleted() {
-             keys_dir.remove(&hint_entry.key())
+                keys_dir.remove(&hint_entry.key())
             }
             else {
                 let key_dir_entry = KeyDirEntry::new(self.file_id.to_string(),
@@ -85,6 +90,20 @@ impl FilePair {
             }
         }
         Ok(())
+    }
+
+    pub fn get_hints(&self) -> anyhow::Result<Vec<HintEntry>>{
+        let mut hints = vec![];
+        let hint_file = File::open(&self.hint_file_path.as_path())?;
+        let mut rdr = BufReader::new(hint_file);
+        while let Ok(hint_entry) = HintEntry::decode(&mut rdr) {
+            hints.push(hint_entry)
+        }
+        Ok(hints)
+    }
+
+    pub fn file_id(&self) -> String {
+        self.file_id.to_owned()
     }
 }
 

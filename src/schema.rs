@@ -1,11 +1,11 @@
 use anyhow::Result;
-use std::io::{Read, BufReader};
-use std::convert::TryInto;
+use std::io::{Read};
+
 use crc::{Crc, CRC_32_CKSUM};
 use chrono::Utc;
-use std::fs::File;
-use std::borrow::BorrowMut;
-use crate::file_ops::FilePair;
+
+
+
 
 pub const CRC_CKSUM: Crc<u32> = Crc::<u32>::new(&CRC_32_CKSUM);
 
@@ -133,13 +133,13 @@ impl HintEntry {
             key: entry.key.clone(),
         }
     }
-    pub fn tombstone(entry: &DataEntry) -> Self {
+    pub fn tombstone(key : Vec<u8>) -> Self {
         Self {
             timestamp: -1,
-            key_size: entry.key_size,
+            key_size: key.len() as u64,
             value_size: 0,
             data_entry_position: 0,
-            key: entry.key.clone(),
+            key,
         }
     }
     pub fn data_entry_position(&self) -> u64 {
@@ -203,6 +203,7 @@ impl Decoder for HintEntry {
         out.data_entry_position = u64::from_be_bytes(raw_data_entry_pos_size_bytes);
 
         let mut raw_key_bytes = vec![0_u8; out.key_size as usize];
+        rdr.read_exact(&mut raw_key_bytes);
         out.key = raw_key_bytes;
 
         Ok(out)
@@ -215,12 +216,12 @@ impl Decoder for HintEntry {
 #[cfg(test)]
 mod tests {
     use crate::schema::{DataEntry, Encoder, Decoder};
-    use std::io::{BufReader, Cursor};
+    use std::io::{Cursor};
 
     #[test]
     fn decode_encode_test() {
         let rec = DataEntry::new(vec![2, 2, 3, 54, 12], vec![32, 4, 1, 32, 65, 78]);
-        let mut e = rec.encode();
+        let e = rec.encode();
         let d = DataEntry::decode(&mut Cursor::new(e)).unwrap();
         println!("{:#?}", d);
         println!("{}", d.check_crc())
