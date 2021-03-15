@@ -8,6 +8,7 @@ use anyhow::bail;
 
 use crate::schema::{HintEntry, DataEntry, Decoder, Encoder};
 use crate::datastore::{KeyDirEntry, KeysDir};
+use fslock::LockFile;
 
 const DATA_FILE_EXTENSION: &str = "data";
 const HINT_FILE_EXTENSION: &str = "hint";
@@ -136,6 +137,15 @@ pub fn create_new_file_pair<P: AsRef<Path>>(dir: P) -> anyhow::Result<FilePair> 
         hint_file_path,
         file_id: file_name,
     })
+}
+
+pub fn get_lock_file<P: AsRef<Path>>(dir: P) -> anyhow::Result<LockFile> {
+    let mut lock_file_path = PathBuf::new();
+    lock_file_path.push(dir.as_ref());
+    lock_file_path.push("notus.write.lock");
+    fs_extra::dir::create_all(dir.as_ref(), false)?;
+    let mut file = LockFile::open(lock_file_path.as_path())?;
+    Ok(file)
 }
 
 pub fn fetch_file_pairs<P: AsRef<Path>>(dir: P) -> anyhow::Result<BTreeMap<String, FilePair>> {
