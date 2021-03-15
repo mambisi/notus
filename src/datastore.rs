@@ -145,6 +145,7 @@ impl DataStore {
 
     pub fn merge(&mut self) -> anyhow::Result<()> {
         let merged_file_pair = create_new_file_pair(self.dir.as_path())?;
+        let mut mark_for_removal = Vec::new();
         for (_, fp) in self.files_dir.iter() {
             if fp.file_id() == self.active_file.file_id() {
                 continue;
@@ -154,11 +155,17 @@ impl DataStore {
                 if let Some(keys_dir_entry) = self.keys_dir.get(&hint.key()) {
                     if keys_dir_entry.file_id == fp.file_id() {
                         let data_entry = fp.read(hint.data_entry_position())?;
-                        merged_file_pair.write(&data_entry);
+                        let key_entry = merged_file_pair.write(&data_entry)?;
+                        self.keys_dir.insert(hint.key(), key_entry);
                     }
                 }
             }
+            mark_for_removal.push(fp.data_file_path());
+            mark_for_removal.push(fp.hint_file_path());
+
         }
+
+        fs_extra::remove_items(&mark_for_removal);
         Ok(())
     }
 }
@@ -180,14 +187,24 @@ mod tests {
             let mut ds = DataStore::open("./testdir/_test_data_store").unwrap();
             ds.put(vec![1, 2, 3], vec![4, 5, 6]).unwrap();
             ds.put(vec![3, 1, 2], vec![12, 32, 1]).unwrap();
+            ds.put(vec![3, 1, 4], vec![121, 200, 187]).unwrap();
             ds.put(vec![1, 2, 3], vec![3, 3, 3]).unwrap();
-            println!("{:#?}", ds.get(vec![1, 2, 3]).unwrap());
+            println!("{:#?}", ds.keys());
         }
 
         {
             let mut ds = DataStore::open("./testdir/_test_data_store").unwrap();
             ds.put(vec![1, 2, 3], vec![9, 9, 6]).unwrap();
-            println!("{:#?}", ds.get(vec![1, 2, 3]).unwrap());
+            ds.delete(vec![3, 1, 2]).unwrap();
+            println!("{:?}", ds.get(vec![1, 2, 3]));
+            println!("{:#?}", ds.keys());
+
+        }
+
+        {
+            let mut ds = DataStore::open("./testdir/_test_data_store").unwrap();
+            ds.delete(vec![1, 2, 3]).unwrap();
+            println!("{:#?}", ds.keys());
         }
 
         clean_up()
@@ -195,10 +212,38 @@ mod tests {
 
     #[test]
     fn test_data_merge_store() {
-        let mut ds = DataStore::open("./testdir/_test_data_store").unwrap();
-        ds.put(vec![1, 2, 3], vec![4, 5, 6]).unwrap();
-        println!("{:#?}", ds.get(vec![1, 2, 3]).unwrap());
-        clean_up()
+        {
+            let mut ds = DataStore::open("./testdir/_test_data_merge_store").unwrap();
+            ds.put(vec![1, 2, 3], vec![4, 5, 6]).unwrap();
+            ds.put(vec![3, 1, 2], vec![12, 32, 1]).unwrap();
+            ds.put(vec![3, 1, 4], vec![121, 200, 187]).unwrap();
+            ds.put(vec![1, 2, 3], vec![3, 3, 3]).unwrap();
+            println!("{:#?}", ds.keys());
+        }
+
+        {
+            let mut ds = DataStore::open("./testdir/_test_data_merge_store").unwrap();
+            ds.put(vec![1, 2, 3], vec![4, 4, 4]).unwrap();
+            ds.put(vec![3, 1, 2], vec![12, 32, 1]).unwrap();
+            ds.put(vec![3, 1, 4], vec![12, 54, 0]).unwrap();
+            ds.put(vec![8, 27, 34], vec![3, 3, 3]).unwrap();
+            println!("{:#?}", ds.keys());
+        }
+
+        {
+            let mut ds = DataStore::open("./testdir/_test_data_merge_store").unwrap();
+            ds.put(vec![1, 2, 3], vec![9, 9, 6]).unwrap();
+            ds.delete(vec![3, 1, 2]).unwrap();
+            println!("{:?}", ds.get(vec![1, 2, 3]));
+            println!("{:#?}", ds.keys());
+
+        }
+
+        {
+            let mut ds = DataStore::open("./testdir/_test_data_merge_store").unwrap();
+            ds.merge();
+            println!("{:#?}", ds.keys());
+        }
     }
 
     fn clean_up() {

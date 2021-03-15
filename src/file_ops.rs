@@ -27,6 +27,14 @@ impl FilePair {
             hint_file_path: Default::default(),
         }
     }
+
+    pub fn data_file_path(&self) -> String{
+        String::from(self.data_file_path.to_string_lossy())
+    }
+
+    pub fn hint_file_path(&self) -> String{
+        String::from(self.hint_file_path.to_string_lossy())
+    }
 }
 
 impl FilePair {
