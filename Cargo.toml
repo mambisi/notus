@@ -11,4 +11,4 @@ crc = "2.0.0-rc.1"
 anyhow = "1.0.38"
 chrono = "0.4"
 fs_extra = "1.2.0"
-fslock = { git = "https://github.com/mambisi/fslock.git"}
+fs2 = "0.4.3"

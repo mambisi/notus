@@ -8,7 +8,6 @@ use anyhow::bail;
 
 use crate::schema::{HintEntry, DataEntry, Decoder, Encoder};
 use crate::datastore::{KeyDirEntry, KeysDir};
-use fslock::LockFile;
 
 const DATA_FILE_EXTENSION: &str = "data";
 const HINT_FILE_EXTENSION: &str = "hint";
@@ -139,12 +138,12 @@ pub fn create_new_file_pair<P: AsRef<Path>>(dir: P) -> anyhow::Result<FilePair> 
     })
 }
 
-pub fn get_lock_file<P: AsRef<Path>>(dir: P) -> anyhow::Result<LockFile> {
+pub fn get_lock_file<P: AsRef<Path>>(dir: P) -> anyhow::Result<File> {
     let mut lock_file_path = PathBuf::new();
     lock_file_path.push(dir.as_ref());
-    lock_file_path.push("notus.write.lock");
+    lock_file_path.push("lock");
     fs_extra::dir::create_all(dir.as_ref(), false)?;
-    let mut file = LockFile::open(lock_file_path.as_path())?;
+    let mut file = OpenOptions::new().write(true).read(true).create(true).open(lock_file_path.as_path())?;
     Ok(file)
 }
 
@@ -156,7 +155,7 @@ pub fn fetch_file_pairs<P: AsRef<Path>>(dir: P) -> anyhow::Result<BTreeMap<Strin
     let dir_content = fs_extra::dir::get_dir_content2(dir, &option)?;
     for file in dir_content.files.iter() {
         let file_path = Path::new(file);
-        let file_extension = String::from(file_path.extension().unwrap().to_string_lossy());
+        let file_extension = String::from(file_path.extension().unwrap_or_default().to_string_lossy());
         match file_extension.as_str() {
             DATA_FILE_EXTENSION => {}
             HINT_FILE_EXTENSION => {}

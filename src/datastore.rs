@@ -3,7 +3,8 @@ use crate::file_ops::{FilePair, fetch_file_pairs, create_new_file_pair, get_lock
 use std::path::{Path, PathBuf};
 use crate::schema::DataEntry;
 use anyhow::bail;
-use fslock::LockFile;
+use std::fs::File;
+use fs2::FileExt;
 
 #[derive(Default, Debug, Clone)]
 pub struct KeyDirEntry {
@@ -68,7 +69,7 @@ impl KeysDir {
 }
 
 pub struct DataStore {
-    lock_file: LockFile,
+    lock_file: File,
     dir: PathBuf,
     active_file: FilePair,
     keys_dir: KeysDir,
@@ -88,12 +89,12 @@ impl DataStore {
             keys_dir,
             files_dir,
         };
-        instance.lock();
+        instance.lock()?;
         Ok(instance)
     }
 
     fn lock(&mut self) -> anyhow::Result<()> {
-        self.lock_file.lock()?;
+        self.lock_file.try_lock_exclusive()?;
         Ok(())
     }
 
@@ -179,6 +180,12 @@ impl DataStore {
     }
 }
 
+impl Drop for DataStore {
+    fn drop(&mut self) {
+        self.lock_file.unlock().unwrap();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::datastore::DataStore;
@@ -193,6 +200,7 @@ mod tests {
 
     #[test]
     fn test_data_reopens() {
+        clean_up();
         {
             let mut ds = DataStore::open("./testdir/_test_data_store").unwrap();
             ds.put(vec![1, 2, 3], vec![4, 5, 6]).unwrap();
@@ -221,6 +229,7 @@ mod tests {
 
     #[test]
     fn test_data_merge_store() {
+        clean_up();
         {
             let mut ds = DataStore::open("./testdir/_test_data_merge_store").unwrap();
             ds.put(vec![1, 2, 3], vec![4, 5, 6]).unwrap();
@@ -252,6 +261,7 @@ mod tests {
             ds.merge();
             println!("{:#?}", ds.keys());
         }
+        clean_up();
     }
 
     #[test]
