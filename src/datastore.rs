@@ -265,20 +265,16 @@ mod tests {
     }
 
     #[test]
-    fn test_data_open_error() {
-            let mut ds = DataStore::open("./testdir/_test_data_merge_store").unwrap();
-            ds.put(vec![1, 2, 3], vec![4, 5, 6]).unwrap();
-            ds.put(vec![3, 1, 2], vec![12, 32, 1]).unwrap();
-            ds.put(vec![3, 1, 4], vec![121, 200, 187]).unwrap();
-            ds.put(vec![1, 2, 3], vec![3, 3, 3]).unwrap();
-            println!("{:#?}", ds.keys());
+    fn test_reopen_without_closing_error() {
+        let mut ds = DataStore::open("./testdir/_test_data_merge_store").unwrap();
+        ds.put(vec![1, 2, 3], vec![4, 5, 6]).unwrap();
+        ds.put(vec![3, 1, 2], vec![12, 32, 1]).unwrap();
+        ds.put(vec![3, 1, 4], vec![121, 200, 187]).unwrap();
+        ds.put(vec![1, 2, 3], vec![3, 3, 3]).unwrap();
+        println!("{:#?}", ds.keys());
 
-            let mut ds2 = DataStore::open("./testdir/_test_data_merge_store").unwrap();
-            ds2.put(vec![1, 2, 3], vec![4, 4, 4]).unwrap();
-            ds2.put(vec![3, 1, 2], vec![12, 32, 1]).unwrap();
-            ds2.put(vec![3, 1, 4], vec![12, 54, 0]).unwrap();
-            ds2.put(vec![8, 27, 34], vec![3, 3, 3]).unwrap();
-            println!("{:#?}", ds.keys());
+        let mut open_result = DataStore::open("./testdir/_test_data_merge_store");
+        assert!(open_result.is_err());
     }
 
     fn clean_up() {
