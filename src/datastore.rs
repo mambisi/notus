@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use crate::file_ops::{FilePair, fetch_file_pairs, create_new_file_pair, get_lock_file};
+use crate::file_ops::{FilePair, fetch_file_pairs, create_new_file_pair, get_lock_file, ActiveFilePair};
 use std::path::{Path, PathBuf};
 use crate::schema::DataEntry;
 use anyhow::bail;
@@ -68,24 +68,27 @@ impl KeysDir {
     }
 }
 
+
+
 pub struct DataStore {
     lock_file: File,
     dir: PathBuf,
-    active_file: FilePair,
+    active_file: ActiveFilePair,
     keys_dir: KeysDir,
     files_dir: BTreeMap<String, FilePair>,
+
 }
 
 impl DataStore {
     pub fn open<P: AsRef<Path>>(dir: P) -> anyhow::Result<Self> {
         let lock_file = get_lock_file(dir.as_ref())?;
-        let active_file = create_new_file_pair(dir.as_ref())?;
+        let active_file_pair = create_new_file_pair(dir.as_ref())?;
         let files_dir = fetch_file_pairs(dir.as_ref())?;
         let keys_dir = KeysDir::new(&files_dir)?;
         let mut instance = Self {
             lock_file,
             dir: dir.as_ref().to_path_buf(),
-            active_file,
+            active_file : ActiveFilePair::from(active_file_pair)?,
             keys_dir,
             files_dir,
         };
@@ -127,25 +130,7 @@ impl DataStore {
     }
 
     pub fn delete(&mut self, key: Vec<u8>) -> anyhow::Result<()> {
-        let key_dir_entry = match self.keys_dir.get(&key) {
-            None => {
-                bail!("Entry doesn't exist")
-            }
-            Some(entry) => {
-                entry
-            }
-        };
-
-        let fp = match self.files_dir.get(&key_dir_entry.file_id) {
-            None => {
-                bail!("file doesn't exist")
-            }
-            Some(fp) => {
-                fp
-            }
-        };
-
-        fp.remove(key.clone())?;
+        self.active_file.remove(key.clone())?;
         self.keys_dir.remove(&key);
         Ok(())
     }
@@ -155,7 +140,7 @@ impl DataStore {
     }
 
     pub fn merge(&mut self) -> anyhow::Result<()> {
-        let merged_file_pair = create_new_file_pair(self.dir.as_path())?;
+        let merged_file_pair = ActiveFilePair::from(create_new_file_pair(self.dir.as_path())?)?;
         let mut mark_for_removal = Vec::new();
         for (_, fp) in self.files_dir.iter() {
             if fp.file_id() == self.active_file.file_id() {
@@ -236,7 +221,6 @@ mod tests {
             ds.put(vec![3, 1, 2], vec![12, 32, 1]).unwrap();
             ds.put(vec![3, 1, 4], vec![121, 200, 187]).unwrap();
             ds.put(vec![1, 2, 3], vec![3, 3, 3]).unwrap();
-            println!("{:#?}", ds.keys());
         }
 
         {
@@ -245,22 +229,25 @@ mod tests {
             ds.put(vec![3, 1, 2], vec![12, 32, 1]).unwrap();
             ds.put(vec![3, 1, 4], vec![12, 54, 0]).unwrap();
             ds.put(vec![8, 27, 34], vec![3, 3, 3]).unwrap();
-            println!("{:#?}", ds.keys());
         }
+
+        let mut keys_before_merge = vec![];
+        let mut keys_after_merge = vec![];
 
         {
             let mut ds = DataStore::open("./testdir/_test_data_merge_store").unwrap();
             ds.put(vec![1, 2, 3], vec![9, 9, 6]).unwrap();
             ds.delete(vec![3, 1, 2]).unwrap();
-            println!("{:?}", ds.get(vec![1, 2, 3]));
-            println!("{:#?}", ds.keys());
+            keys_before_merge = ds.keys();
         }
 
         {
             let mut ds = DataStore::open("./testdir/_test_data_merge_store").unwrap();
             ds.merge();
-            println!("{:#?}", ds.keys());
+            keys_after_merge = ds.keys();
         }
+
+        assert_eq!(keys_before_merge,keys_after_merge);
         clean_up();
     }
 

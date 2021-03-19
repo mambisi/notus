@@ -4,7 +4,7 @@ use std::fs::{OpenOptions, File};
 use std::io::{BufReader, Seek, SeekFrom, BufWriter, Write};
 use fs_extra::dir::DirOptions;
 use std::collections::BTreeMap;
-use anyhow::bail;
+use anyhow::{bail, Error};
 
 use crate::schema::{HintEntry, DataEntry, Decoder, Encoder};
 use crate::datastore::{KeyDirEntry, KeysDir};
@@ -12,7 +12,7 @@ use crate::datastore::{KeyDirEntry, KeysDir};
 const DATA_FILE_EXTENSION: &str = "data";
 const HINT_FILE_EXTENSION: &str = "hint";
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FilePair {
     file_id: String,
     data_file_path: PathBuf,
@@ -28,11 +28,11 @@ impl FilePair {
         }
     }
 
-    pub fn data_file_path(&self) -> String{
+    pub fn data_file_path(&self) -> String {
         String::from(self.data_file_path.to_string_lossy())
     }
 
-    pub fn hint_file_path(&self) -> String{
+    pub fn hint_file_path(&self) -> String {
         String::from(self.hint_file_path.to_string_lossy())
     }
 }
@@ -49,58 +49,24 @@ impl FilePair {
         Ok(data_entry)
     }
 
-    pub fn write(&self, entry: &DataEntry) -> anyhow::Result<KeyDirEntry> {
-        //Appends entry to data file
-        let data_file = OpenOptions::new().write(true).open(&self.data_file_path.as_path())?;
-        let mut dfw = BufWriter::new(data_file);
-        let data_entry_position = dfw.seek(SeekFrom::End(0))?;
-        dfw.write_all(&entry.encode())?;
-        dfw.flush();
-        //Append hint to hint file
-        let hint_entry = HintEntry::from(entry, data_entry_position);
-        let hint_file = OpenOptions::new().write(true).open(&self.hint_file_path.as_path())?;
-        let mut hfw = BufWriter::new(hint_file);
-        hfw.seek(SeekFrom::End(0))?;
-        hfw.write_all(&hint_entry.encode())?;
-        hfw.flush();
-
-
-        Ok(KeyDirEntry::new(self.file_id.to_string(),
-                            hint_entry.key_size(),
-                            hint_entry.value_size(),
-                            data_entry_position))
-    }
-
-    pub fn remove(&self, key : Vec<u8>) -> anyhow::Result<()> {
-        //Append hint to hint file
-        let hint_entry = HintEntry::tombstone(key);
-        let hint_file = OpenOptions::new().write(true).open(&self.hint_file_path.as_path())?;
-        let mut hfw = BufWriter::new(hint_file);
-        hfw.seek(SeekFrom::End(0))?;
-        hfw.write_all(&hint_entry.encode())?;
-        hfw.flush();
-        Ok(())
-    }
-
-    pub fn fetch_hint_entries(&self, keys_dir : &mut KeysDir) -> anyhow::Result<()>{
+    pub fn fetch_hint_entries(&self, keys_dir: &mut KeysDir) -> anyhow::Result<()> {
         let hint_file = File::open(&self.hint_file_path.as_path())?;
         let mut rdr = BufReader::new(hint_file);
         while let Ok(hint_entry) = HintEntry::decode(&mut rdr) {
             if hint_entry.is_deleted() {
                 keys_dir.remove(&hint_entry.key())
-            }
-            else {
+            } else {
                 let key_dir_entry = KeyDirEntry::new(self.file_id.to_string(),
                                                      hint_entry.key_size(),
                                                      hint_entry.value_size(),
                                                      hint_entry.data_entry_position());
-                keys_dir.insert(hint_entry.key(),key_dir_entry);
+                keys_dir.insert(hint_entry.key(), key_dir_entry);
             }
         }
         Ok(())
     }
 
-    pub fn get_hints(&self) -> anyhow::Result<Vec<HintEntry>>{
+    pub fn get_hints(&self) -> anyhow::Result<Vec<HintEntry>> {
         let mut hints = vec![];
         let hint_file = File::open(&self.hint_file_path.as_path())?;
         let mut rdr = BufReader::new(hint_file);
@@ -112,6 +78,80 @@ impl FilePair {
 
     pub fn file_id(&self) -> String {
         self.file_id.to_owned()
+    }
+}
+
+pub struct ActiveFilePair {
+    hint_file: File,
+    data_file: File,
+    file_pair: FilePair,
+}
+
+
+impl ActiveFilePair {
+    pub fn from(file_pair: FilePair) -> anyhow::Result<Self> {
+        let data_file = OpenOptions::new().write(true).create(true).open(&file_pair.data_file_path.as_path())?;
+        let hint_file = OpenOptions::new().write(true).create(true).open(&file_pair.hint_file_path.as_path())?;
+        Ok(Self {
+            hint_file,
+            data_file,
+            file_pair,
+        })
+    }
+
+    pub fn get_file_pair(&self) -> FilePair {
+        self.file_pair.clone()
+    }
+
+    pub fn sync(&mut self) -> anyhow::Result<()> {
+        self.hint_file.sync_all()?;
+        self.data_file.sync_all()?;
+        Ok(())
+    }
+
+    pub fn file_id(&self) -> String {
+        self.file_pair.file_id.to_owned()
+    }
+}
+
+impl Drop for ActiveFilePair {
+    fn drop(&mut self) {
+        match self.sync(){
+            Ok(_) => {}
+            Err(_) => {}
+        }
+    }
+}
+
+impl ActiveFilePair {
+    pub fn write(&self, entry: &DataEntry) -> anyhow::Result<KeyDirEntry> {
+        //Appends entry to data file
+        let mut dfw = BufWriter::new(&self.data_file);
+        let data_entry_position = dfw.seek(SeekFrom::End(0))?;
+        dfw.write_all(&entry.encode())?;
+        dfw.flush();
+        //Append hint to hint file
+        let hint_entry = HintEntry::from(entry, data_entry_position);
+        let mut hfw = BufWriter::new(&self.hint_file);
+        hfw.seek(SeekFrom::End(0))?;
+        hfw.write_all(&hint_entry.encode())?;
+        hfw.flush();
+
+
+        Ok(KeyDirEntry::new(self.file_pair.file_id.to_string(),
+                            hint_entry.key_size(),
+                            hint_entry.value_size(),
+                            data_entry_position))
+    }
+
+    pub fn remove(&self, key: Vec<u8>) -> anyhow::Result<()> {
+        //Append hint to hint file
+        let hint_entry = HintEntry::tombstone(key);
+        let mut hfw = BufWriter::new(&self.hint_file);
+        hfw.seek(SeekFrom::End(0))?;
+        hfw.write_all(&hint_entry.encode())?;
+        hfw.flush();
+        Ok(())
     }
 }
 
