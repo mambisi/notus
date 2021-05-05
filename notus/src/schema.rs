@@ -1,12 +1,7 @@
 use anyhow::Result;
 use std::io::{Read};
-
 use crc::{Crc, CRC_32_CKSUM};
 use chrono::Utc;
-
-
-
-
 pub const CRC_CKSUM: Crc<u32> = Crc::<u32>::new(&CRC_32_CKSUM);
 
 #[derive(Debug, Clone, PartialOrd, PartialEq)]

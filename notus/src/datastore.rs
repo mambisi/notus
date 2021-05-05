@@ -5,6 +5,10 @@ use crate::schema::DataEntry;
 use anyhow::bail;
 use std::fs::File;
 use fs2::FileExt;
+use anyhow::Result;
+use crate::errors::NotusError;
+use std::sync::{RwLock, Arc, PoisonError, RwLockReadGuard};
+use std::alloc::Global;
 
 #[derive(Default, Debug, Clone)]
 pub struct KeyDirEntry {
@@ -26,26 +30,54 @@ impl KeyDirEntry {
 }
 
 pub struct KeysDir {
-    keys: BTreeMap<Vec<u8>, KeyDirEntry>
+    keys: Arc<RwLock<BTreeMap<Vec<u8>, KeyDirEntry>>>
 }
 
 impl KeysDir {
-    pub fn insert(&mut self, key: Vec<u8>, value: KeyDirEntry) {
-        self.keys.insert(key, value);
+    pub fn insert(&self, key: Vec<u8>, value: KeyDirEntry) -> Result<()>{
+        let keys = self.keys.clone();
+        let mut keys_dir_writer = keys.write().map_err(|e|{
+            NotusError::RWLockPoisonError(format!("{}", e))
+        })?;
+        keys_dir_writer.insert(key, value);
+        Ok(())
     }
 
-    pub fn remove(&mut self, key: &[u8]) {
-        self.keys.remove(key);
+    pub fn remove(&self, key: &[u8]) -> Result<()>{
+        let keys = self.keys.clone();
+        let mut keys_dir_writer = keys.write().map_err(|e|{
+            NotusError::RWLockPoisonError(format!("{}", e))
+        })?;
+        keys_dir_writer.remove(key);
+        Ok(())
     }
 
     pub fn keys(&self) -> Vec<Vec<u8>> {
-        self.keys.iter().map(|(k, v)| {
+        let keys = self.keys.clone();
+        let keys_dir_reader = match  keys.read(){
+            Ok(rdr) => {
+                rdr
+            }
+            Err(_) => {
+                return vec![]
+            }
+        };
+        keys_dir_reader.iter().map(|(k, _)| {
             k.clone()
         }).collect()
     }
 
     pub fn get(&self, key: &[u8]) -> Option<KeyDirEntry> {
-        match self.keys.get(key) {
+        let keys = self.keys.clone();
+        let keys_dir_reader = match keys.read() {
+            Ok(rdr) => {
+                rdr
+            }
+            Err(_) => {
+                return None
+            }
+        };
+        match keys_dir_reader.get(key) {
             None => {
                 None
             }
@@ -57,12 +89,13 @@ impl KeysDir {
 }
 
 impl KeysDir {
-    pub fn new(file_pairs: &BTreeMap<String, FilePair>) -> anyhow::Result<Self> {
+    pub fn new(file_pairs: &BTreeMap<String, FilePair>) -> Result<Self> {
+        let keys =Arc::new(RwLock::new(BTreeMap::new()));
         let mut keys_dir = Self {
-            keys: Default::default()
+            keys
         };
         for (_, fp) in file_pairs {
-            fp.fetch_hint_entries(&mut keys_dir)?;
+            fp.fetch_hint_entries(&keys_dir)?;
         }
         Ok(keys_dir)
     }
@@ -71,16 +104,18 @@ impl KeysDir {
 
 
 pub struct DataStore {
+
     lock_file: File,
     dir: PathBuf,
     active_file: ActiveFilePair,
-    keys_dir: KeysDir,
-    files_dir: BTreeMap<String, FilePair>,
+    keys_dir: Arc<KeysDir>,
+    files_dir: Arc<RwLock<BTreeMap<String, FilePair>>>,
 
 }
 
 impl DataStore {
-    pub fn open<P: AsRef<Path>>(dir: P) -> anyhow::Result<Self> {
+    pub fn open<P: AsRef<Path>>(dir: P) -> Result<Self> {
+
         let lock_file = get_lock_file(dir.as_ref())?;
         let active_file_pair = create_new_file_pair(dir.as_ref())?;
         let files_dir = fetch_file_pairs(dir.as_ref())?;
@@ -89,26 +124,28 @@ impl DataStore {
             lock_file,
             dir: dir.as_ref().to_path_buf(),
             active_file : ActiveFilePair::from(active_file_pair)?,
-            keys_dir,
-            files_dir,
+            keys_dir  : Arc::new(keys_dir),
+            files_dir : Arc::new(RwLock::new(files_dir))
         };
         instance.lock()?;
         Ok(instance)
     }
 
-    fn lock(&mut self) -> anyhow::Result<()> {
-        self.lock_file.try_lock_exclusive()?;
+    fn lock(&mut self) -> Result<()> {
+        self.lock_file.try_lock_exclusive().map_err(|_| {
+            NotusError::LockFailed(String::from(self.dir.to_string_lossy()))
+        })?;
         Ok(())
     }
 
-    pub fn put(&mut self, key: Vec<u8>, value: Vec<u8>) -> anyhow::Result<()> {
+    pub fn put(&self, key: Vec<u8>, value: Vec<u8>) -> Result<()> {
         let data_entry = DataEntry::new(key.clone(), value);
         let key_dir_entry = self.active_file.write(&data_entry)?;
         self.keys_dir.insert(key, key_dir_entry);
         Ok(())
     }
 
-    pub fn get(&self, key: Vec<u8>) -> anyhow::Result<Option<Vec<u8>>> {
+    pub fn get(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>> {
         let key_dir_entry = match self.keys_dir.get(&key) {
             None => {
                 return Ok(None);
@@ -117,7 +154,13 @@ impl DataStore {
                 entry
             }
         };
-        let fp = match self.files_dir.get(&key_dir_entry.file_id) {
+
+        let files_dir = self.files_dir.clone();
+        let files_dir_rlock = files_dir.read().map_err(|e|{
+            NotusError::RWLockPoisonError(format!("{}", e))
+        })?;;
+
+        let fp = match files_dir_rlock.get(&key_dir_entry.file_id) {
             None => {
                 return Ok(None);
             }
@@ -129,7 +172,7 @@ impl DataStore {
         Ok(Some(data_entry.value()))
     }
 
-    pub fn delete(&mut self, key: Vec<u8>) -> anyhow::Result<()> {
+    pub fn delete(&self, key: Vec<u8>) -> Result<()> {
         self.active_file.remove(key.clone())?;
         self.keys_dir.remove(&key);
         Ok(())
@@ -139,10 +182,16 @@ impl DataStore {
         self.keys_dir.keys()
     }
 
-    pub fn merge(&mut self) -> anyhow::Result<()> {
+    pub fn merge(&self) -> anyhow::Result<()> {
         let merged_file_pair = ActiveFilePair::from(create_new_file_pair(self.dir.as_path())?)?;
         let mut mark_for_removal = Vec::new();
-        for (_, fp) in self.files_dir.iter() {
+
+        let files_dir = self.files_dir.clone();
+        let files_dir_rlock = files_dir.read().map_err(|e|{
+            NotusError::RWLockPoisonError(format!("{}", e))
+        })?;;
+
+        for (_, fp) in files_dir_rlock.iter() {
             if fp.file_id() == self.active_file.file_id() {
                 continue;
             }
@@ -173,9 +222,13 @@ impl Drop for DataStore {
 
 #[cfg(test)]
 mod tests {
+
+
     use crate::datastore::DataStore;
+    use serial_test::serial;
 
     #[test]
+    #[serial]
     fn test_data_store() {
         let mut ds = DataStore::open("./testdir/_test_data_store").unwrap();
         ds.put(vec![1, 2, 3], vec![4, 5, 6]).unwrap();
@@ -184,6 +237,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_data_reopens() {
         clean_up();
         {
@@ -213,6 +267,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_data_merge_store() {
         clean_up();
         {
@@ -252,6 +307,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_reopen_without_closing_error() {
         let mut ds = DataStore::open("./testdir/_test_data_merge_store").unwrap();
         ds.put(vec![1, 2, 3], vec![4, 5, 6]).unwrap();

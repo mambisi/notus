@@ -4,10 +4,12 @@ use std::fs::{OpenOptions, File};
 use std::io::{BufReader, Seek, SeekFrom, BufWriter, Write};
 use fs_extra::dir::DirOptions;
 use std::collections::BTreeMap;
-use anyhow::{bail, Error};
+use anyhow::{bail, Error, Result};
 
 use crate::schema::{HintEntry, DataEntry, Decoder, Encoder};
 use crate::datastore::{KeyDirEntry, KeysDir};
+use fs2::FileExt;
+use crate::errors::NotusError;
 
 const DATA_FILE_EXTENSION: &str = "data";
 const HINT_FILE_EXTENSION: &str = "hint";
@@ -38,28 +40,30 @@ impl FilePair {
 }
 
 impl FilePair {
-    pub fn read(&self, entry_position: u64) -> anyhow::Result<DataEntry> {
+    pub fn read(&self, entry_position: u64) -> Result<DataEntry, NotusError> {
         let data_file = File::open(&self.data_file_path.as_path())?;
         let mut reader = BufReader::new(data_file);
         reader.seek(SeekFrom::Start(entry_position))?;
         let data_entry = DataEntry::decode(&mut reader)?;
         if !data_entry.check_crc() {
-            bail!("Corrupt data")
+            return Err(NotusError::CorruptValue);
         }
         Ok(data_entry)
     }
 
-    pub fn fetch_hint_entries(&self, keys_dir: &mut KeysDir) -> anyhow::Result<()> {
+    pub fn fetch_hint_entries(&self, keys_dir: &KeysDir) -> Result<()> {
         let hint_file = File::open(&self.hint_file_path.as_path())?;
         let mut rdr = BufReader::new(hint_file);
         while let Ok(hint_entry) = HintEntry::decode(&mut rdr) {
             if hint_entry.is_deleted() {
-                keys_dir.remove(&hint_entry.key())
+                keys_dir.remove(&hint_entry.key());
             } else {
-                let key_dir_entry = KeyDirEntry::new(self.file_id.to_string(),
-                                                     hint_entry.key_size(),
-                                                     hint_entry.value_size(),
-                                                     hint_entry.data_entry_position());
+                let key_dir_entry = KeyDirEntry::new(
+                    self.file_id.to_string(),
+                    hint_entry.key_size(),
+                    hint_entry.value_size(),
+                    hint_entry.data_entry_position()
+                );
                 keys_dir.insert(hint_entry.key(), key_dir_entry);
             }
         }
@@ -89,7 +93,7 @@ pub struct ActiveFilePair {
 
 
 impl ActiveFilePair {
-    pub fn from(file_pair: FilePair) -> anyhow::Result<Self> {
+    pub fn from(file_pair: FilePair) -> Result<Self> {
         let data_file = OpenOptions::new().write(true).create(true).open(&file_pair.data_file_path.as_path())?;
         let hint_file = OpenOptions::new().write(true).create(true).open(&file_pair.hint_file_path.as_path())?;
         Ok(Self {
@@ -103,7 +107,7 @@ impl ActiveFilePair {
         self.file_pair.clone()
     }
 
-    pub fn sync(&mut self) -> anyhow::Result<()> {
+    pub fn sync(&self) -> Result<()> {
         self.hint_file.sync_all()?;
         self.data_file.sync_all()?;
         Ok(())
@@ -116,15 +120,20 @@ impl ActiveFilePair {
 
 impl Drop for ActiveFilePair {
     fn drop(&mut self) {
-        match self.sync(){
+        match self.sync() {
             Ok(_) => {}
-            Err(_) => {}
+            Err(e) => {
+                eprintln!("Sync Error: {:#?}", e)
+            }
         }
     }
 }
 
 impl ActiveFilePair {
-    pub fn write(&self, entry: &DataEntry) -> anyhow::Result<KeyDirEntry> {
+    pub fn write(&self, entry: &DataEntry) -> Result<KeyDirEntry> {
+        self.data_file.try_lock_exclusive()?;
+        self.hint_file.try_lock_exclusive()?;
+
         //Appends entry to data file
         let mut dfw = BufWriter::new(&self.data_file);
         let data_entry_position = dfw.seek(SeekFrom::End(0))?;
@@ -137,6 +146,9 @@ impl ActiveFilePair {
         hfw.write_all(&hint_entry.encode())?;
         hfw.flush();
 
+        self.data_file.unlock()?;
+        self.hint_file.unlock()?;
+
 
         Ok(KeyDirEntry::new(self.file_pair.file_id.to_string(),
                             hint_entry.key_size(),
@@ -144,13 +156,15 @@ impl ActiveFilePair {
                             data_entry_position))
     }
 
-    pub fn remove(&self, key: Vec<u8>) -> anyhow::Result<()> {
+    pub fn remove(&self, key: Vec<u8>) -> Result<()> {
+        self.hint_file.try_lock_exclusive()?;
         //Append hint to hint file
         let hint_entry = HintEntry::tombstone(key);
         let mut hfw = BufWriter::new(&self.hint_file);
         hfw.seek(SeekFrom::End(0))?;
         hfw.write_all(&hint_entry.encode())?;
         hfw.flush();
+        self.hint_file.unlock()?;
         Ok(())
     }
 }
@@ -181,7 +195,7 @@ pub fn create_new_file_pair<P: AsRef<Path>>(dir: P) -> anyhow::Result<FilePair> 
 pub fn get_lock_file<P: AsRef<Path>>(dir: P) -> anyhow::Result<File> {
     let mut lock_file_path = PathBuf::new();
     lock_file_path.push(dir.as_ref());
-    lock_file_path.push("lock");
+    lock_file_path.push("nutos.lock");
     fs_extra::dir::create_all(dir.as_ref(), false)?;
     let mut file = OpenOptions::new().write(true).read(true).create(true).open(lock_file_path.as_path())?;
     Ok(file)
