@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use crate::file_ops::{FilePair, fetch_file_pairs, create_new_file_pair, get_lock_file, ActiveFilePair};
 use std::path::{Path, PathBuf};
 use crate::schema::DataEntry;
@@ -9,6 +9,7 @@ use anyhow::Result;
 use crate::errors::NotusError;
 use std::sync::{RwLock, Arc, PoisonError, RwLockReadGuard};
 use std::alloc::Global;
+use std::ops::Range;
 
 #[derive(Default, Debug, Clone)]
 pub struct KeyDirEntry {
@@ -34,35 +35,74 @@ pub struct KeysDir {
 }
 
 impl KeysDir {
-    pub fn insert(&self, key: Vec<u8>, value: KeyDirEntry) -> Result<()>{
+    pub fn insert(&self, key: Vec<u8>, value: KeyDirEntry) -> Result<()> {
         let keys = self.keys.clone();
-        let mut keys_dir_writer = keys.write().map_err(|e|{
+        let mut keys_dir_writer = keys.write().map_err(|e| {
             NotusError::RWLockPoisonError(format!("{}", e))
         })?;
         keys_dir_writer.insert(key, value);
         Ok(())
     }
 
-    pub fn remove(&self, key: &[u8]) -> Result<()>{
+    pub fn remove(&self, key: &[u8]) -> Result<()> {
         let keys = self.keys.clone();
-        let mut keys_dir_writer = keys.write().map_err(|e|{
+        let mut keys_dir_writer = keys.write().map_err(|e| {
             NotusError::RWLockPoisonError(format!("{}", e))
         })?;
         keys_dir_writer.remove(key);
         Ok(())
     }
 
+    pub fn clear(&self) -> Result<()> {
+        let keys = self.keys.clone();
+        let mut keys_dir_writer = keys.write().map_err(|e| {
+            NotusError::RWLockPoisonError(format!("{}", e))
+        })?;
+        keys_dir_writer.clear();
+        Ok(())
+    }
+
     pub fn keys(&self) -> Vec<Vec<u8>> {
         let keys = self.keys.clone();
-        let keys_dir_reader = match  keys.read(){
+        let keys_dir_reader = match keys.read() {
             Ok(rdr) => {
                 rdr
             }
             Err(_) => {
-                return vec![]
+                return vec![];
             }
         };
         keys_dir_reader.iter().map(|(k, _)| {
+            k.clone()
+        }).collect()
+    }
+
+    pub fn range(&self, range: Range<Vec<u8>>) -> Vec<Vec<u8>> {
+        let keys = self.keys.clone();
+        let keys_dir_reader = match keys.read() {
+            Ok(rdr) => {
+                rdr
+            }
+            Err(_) => {
+                return vec![];
+            }
+        };
+        keys_dir_reader.range(range).map(|(k, _)| {
+            k.clone()
+        }).collect()
+    }
+
+    pub fn prefix(&self, prefix: &Vec<u8>) -> Vec<Vec<u8>> {
+        let keys = self.keys.clone();
+        let keys_dir_reader = match keys.read() {
+            Ok(rdr) => {
+                rdr
+            }
+            Err(_) => {
+                return vec![];
+            }
+        };
+        keys_dir_reader.range(prefix..).take_while(|(k, _)| k.starts_with(prefix)).map(|(k, _)| {
             k.clone()
         }).collect()
     }
@@ -74,7 +114,7 @@ impl KeysDir {
                 rdr
             }
             Err(_) => {
-                return None
+                return None;
             }
         };
         match keys_dir_reader.get(key) {
@@ -90,7 +130,7 @@ impl KeysDir {
 
 impl KeysDir {
     pub fn new(file_pairs: &BTreeMap<String, FilePair>) -> Result<Self> {
-        let keys =Arc::new(RwLock::new(BTreeMap::new()));
+        let keys = Arc::new(RwLock::new(BTreeMap::new()));
         let mut keys_dir = Self {
             keys
         };
@@ -102,9 +142,7 @@ impl KeysDir {
 }
 
 
-
 pub struct DataStore {
-
     lock_file: File,
     dir: PathBuf,
     active_file: ActiveFilePair,
@@ -115,7 +153,6 @@ pub struct DataStore {
 
 impl DataStore {
     pub fn open<P: AsRef<Path>>(dir: P) -> Result<Self> {
-
         let lock_file = get_lock_file(dir.as_ref())?;
         let active_file_pair = create_new_file_pair(dir.as_ref())?;
         let files_dir = fetch_file_pairs(dir.as_ref())?;
@@ -123,9 +160,9 @@ impl DataStore {
         let mut instance = Self {
             lock_file,
             dir: dir.as_ref().to_path_buf(),
-            active_file : ActiveFilePair::from(active_file_pair)?,
-            keys_dir  : Arc::new(keys_dir),
-            files_dir : Arc::new(RwLock::new(files_dir))
+            active_file: ActiveFilePair::from(active_file_pair)?,
+            keys_dir: Arc::new(keys_dir),
+            files_dir: Arc::new(RwLock::new(files_dir)),
         };
         instance.lock()?;
         Ok(instance)
@@ -156,9 +193,10 @@ impl DataStore {
         };
 
         let files_dir = self.files_dir.clone();
-        let files_dir_rlock = files_dir.read().map_err(|e|{
+        let files_dir_rlock = files_dir.read().map_err(|e| {
             NotusError::RWLockPoisonError(format!("{}", e))
-        })?;;
+        })?;
+        ;
 
         let fp = match files_dir_rlock.get(&key_dir_entry.file_id) {
             None => {
@@ -178,8 +216,23 @@ impl DataStore {
         Ok(())
     }
 
+    pub fn clear(&self) -> Result<()> {
+        for key in self.keys() {
+            let _ = self.delete(key)?;
+        }
+        Ok(())
+    }
+
     pub fn keys(&self) -> Vec<Vec<u8>> {
         self.keys_dir.keys()
+    }
+
+    pub fn range(&self, range: Range<Vec<u8>>) -> Vec<Vec<u8>> {
+        self.keys_dir.range(range)
+    }
+
+    pub fn prefix(&self, prefix: &Vec<u8>) -> Vec<Vec<u8>> {
+        self.keys_dir.prefix(prefix)
     }
 
     pub fn merge(&self) -> anyhow::Result<()> {
@@ -187,9 +240,10 @@ impl DataStore {
         let mut mark_for_removal = Vec::new();
 
         let files_dir = self.files_dir.clone();
-        let files_dir_rlock = files_dir.read().map_err(|e|{
+        let files_dir_rlock = files_dir.read().map_err(|e| {
             NotusError::RWLockPoisonError(format!("{}", e))
-        })?;;
+        })?;
+        ;
 
         for (_, fp) in files_dir_rlock.iter() {
             if fp.file_id() == self.active_file.file_id() {
@@ -222,8 +276,6 @@ impl Drop for DataStore {
 
 #[cfg(test)]
 mod tests {
-
-
     use crate::datastore::DataStore;
     use serial_test::serial;
 
@@ -302,7 +354,7 @@ mod tests {
             keys_after_merge = ds.keys();
         }
 
-        assert_eq!(keys_before_merge,keys_after_merge);
+        assert_eq!(keys_before_merge, keys_after_merge);
         clean_up();
     }
 
