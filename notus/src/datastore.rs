@@ -40,13 +40,12 @@ enum KeyDirValueEntry {
 }
 
 pub struct KeysDir {
-    keys: Arc<RwLock<BTreeMap<Vec<u8>, KeyDirValueEntry>>>
+    keys: RwLock<BTreeMap<Vec<u8>, KeyDirValueEntry>>
 }
 
 impl KeysDir {
     pub fn insert(&self, key: Vec<u8>, value: KeyDirEntry) -> Result<()> {
-        let keys = self.keys.clone();
-        let mut keys_dir_writer = keys.write().map_err(|e| {
+        let mut keys_dir_writer = self.keys.write().map_err(|e| {
             NotusError::RWLockPoisonError(format!("{}", e))
         })?;
         keys_dir_writer.insert(key, KeyDirValueEntry::Persisted(value));
@@ -54,8 +53,7 @@ impl KeysDir {
     }
 
     pub fn buffer_insert(&self, key: Vec<u8>) -> Result<()> {
-        let keys = self.keys.clone();
-        let mut keys_dir_writer = keys.write().map_err(|e| {
+        let mut keys_dir_writer = self.keys.write().map_err(|e| {
             NotusError::RWLockPoisonError(format!("{}", e))
         })?;
         keys_dir_writer.insert(key, KeyDirValueEntry::Buffer);
@@ -63,8 +61,7 @@ impl KeysDir {
     }
 
     pub fn remove(&self, key: &[u8]) -> Result<()> {
-        let keys = self.keys.clone();
-        let mut keys_dir_writer = keys.write().map_err(|e| {
+        let mut keys_dir_writer = self.keys.write().map_err(|e| {
             NotusError::RWLockPoisonError(format!("{}", e))
         })?;
         keys_dir_writer.remove(key);
@@ -72,8 +69,7 @@ impl KeysDir {
     }
 
     pub fn clear(&self) -> Result<()> {
-        let keys = self.keys.clone();
-        let mut keys_dir_writer = keys.write().map_err(|e| {
+        let mut keys_dir_writer = self.keys.write().map_err(|e| {
             NotusError::RWLockPoisonError(format!("{}", e))
         })?;
         keys_dir_writer.clear();
@@ -81,8 +77,7 @@ impl KeysDir {
     }
 
     pub fn keys(&self) -> Vec<Vec<u8>> {
-        let keys = self.keys.clone();
-        let keys_dir_reader = match keys.read() {
+        let keys_dir_reader = match self.keys.read() {
             Ok(rdr) => {
                 rdr
             }
@@ -96,8 +91,7 @@ impl KeysDir {
     }
 
     pub fn range(&self, range: RangeFrom<Vec<u8>>) -> Vec<Vec<u8>> {
-        let keys = self.keys.clone();
-        let keys_dir_reader = match keys.read() {
+        let keys_dir_reader = match self.keys.read() {
             Ok(rdr) => {
                 rdr
             }
@@ -111,8 +105,7 @@ impl KeysDir {
     }
 
     pub fn prefix(&self, prefix: &Vec<u8>) -> Vec<Vec<u8>> {
-        let keys = self.keys.clone();
-        let keys_dir_reader = match keys.read() {
+        let keys_dir_reader = match self.keys.read() {
             Ok(rdr) => {
                 rdr
             }
@@ -126,8 +119,7 @@ impl KeysDir {
     }
 
     pub fn get(&self, key: &[u8]) -> Option<KeyDirValueEntry> {
-        let keys = self.keys.clone();
-        let keys_dir_reader = match keys.read() {
+        let keys_dir_reader = match self.keys.read() {
             Ok(rdr) => {
                 rdr
             }
@@ -148,7 +140,7 @@ impl KeysDir {
 
 impl KeysDir {
     pub fn new(file_pairs: &BTreeMap<String, FilePair>) -> Result<Self> {
-        let keys = Arc::new(RwLock::new(BTreeMap::new()));
+        let keys = RwLock::new(BTreeMap::new());
         let mut keys_dir = Self {
             keys
         };

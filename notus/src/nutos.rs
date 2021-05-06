@@ -41,6 +41,7 @@ impl Notus {
         let dropper = self.dropped.clone();
         let store = self.store.clone();
         thread::spawn( move || {
+            println!("started worker-thread");
             loop {
                 let dropped = dropper.load(Ordering::Acquire);
                 if dropped {
@@ -49,6 +50,7 @@ impl Notus {
                 thread::sleep(Duration::from_millis(1));
                 store.flush();
             }
+            println!("ended worker-thread");
         });
 
     }
