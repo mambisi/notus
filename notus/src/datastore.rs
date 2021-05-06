@@ -10,6 +10,9 @@ use crate::errors::NotusError;
 use std::sync::{RwLock, Arc, PoisonError, RwLockReadGuard};
 use std::alloc::Global;
 use std::ops::{Range, RangeFrom};
+use dashmap::DashMap;
+use std::collections::hash_map::RandomState;
+use dashmap::mapref::one::Ref;
 
 #[derive(Default, Debug, Clone)]
 pub struct KeyDirEntry {
@@ -30,8 +33,14 @@ impl KeyDirEntry {
     }
 }
 
+#[derive(Debug, Clone)]
+enum KeyDirValueEntry {
+    Persisted(KeyDirEntry),
+    Buffer,
+}
+
 pub struct KeysDir {
-    keys: Arc<RwLock<BTreeMap<Vec<u8>, KeyDirEntry>>>
+    keys: Arc<RwLock<BTreeMap<Vec<u8>, KeyDirValueEntry>>>
 }
 
 impl KeysDir {
@@ -40,7 +49,16 @@ impl KeysDir {
         let mut keys_dir_writer = keys.write().map_err(|e| {
             NotusError::RWLockPoisonError(format!("{}", e))
         })?;
-        keys_dir_writer.insert(key, value);
+        keys_dir_writer.insert(key, KeyDirValueEntry::Persisted(value));
+        Ok(())
+    }
+
+    pub fn buffer_insert(&self, key: Vec<u8>) -> Result<()> {
+        let keys = self.keys.clone();
+        let mut keys_dir_writer = keys.write().map_err(|e| {
+            NotusError::RWLockPoisonError(format!("{}", e))
+        })?;
+        keys_dir_writer.insert(key, KeyDirValueEntry::Buffer);
         Ok(())
     }
 
@@ -107,7 +125,7 @@ impl KeysDir {
         }).collect()
     }
 
-    pub fn get(&self, key: &[u8]) -> Option<KeyDirEntry> {
+    pub fn get(&self, key: &[u8]) -> Option<KeyDirValueEntry> {
         let keys = self.keys.clone();
         let keys_dir_reader = match keys.read() {
             Ok(rdr) => {
@@ -148,7 +166,7 @@ pub struct DataStore {
     active_file: ActiveFilePair,
     keys_dir: Arc<KeysDir>,
     files_dir: Arc<RwLock<BTreeMap<String, FilePair>>>,
-
+    buffer: DashMap<Vec<u8>, Vec<u8>>,
 }
 
 impl DataStore {
@@ -163,6 +181,7 @@ impl DataStore {
             active_file: ActiveFilePair::from(active_file_pair)?,
             keys_dir: Arc::new(keys_dir),
             files_dir: Arc::new(RwLock::new(files_dir)),
+            buffer: Default::default(),
         };
         instance.lock()?;
         Ok(instance)
@@ -176,6 +195,13 @@ impl DataStore {
     }
 
     pub fn put(&self, key: Vec<u8>, value: Vec<u8>) -> Result<()> {
+        self.buffer.insert(key.clone(), value);
+        self.keys_dir.buffer_insert(key);
+        Ok(())
+    }
+
+    fn persist(&self, key: Vec<u8>, value: Vec<u8>) -> Result<()> {
+        self.buffer.remove(&key);
         let data_entry = DataEntry::new(key.clone(), value);
         let key_dir_entry = self.active_file.write(&data_entry)?;
         self.keys_dir.insert(key, key_dir_entry);
@@ -188,7 +214,21 @@ impl DataStore {
                 return Ok(None);
             }
             Some(entry) => {
-                entry
+                match entry {
+                    KeyDirValueEntry::Persisted(entry) => {
+                        entry
+                    }
+                    KeyDirValueEntry::Buffer => {
+                        return match self.buffer.get(key) {
+                            None => {
+                                Ok(None)
+                            }
+                            Some(value) => {
+                                Ok(Some(value.value().clone()))
+                            }
+                        };
+                    }
+                }
             }
         };
 
@@ -218,8 +258,9 @@ impl DataStore {
 
     pub fn clear(&self) -> Result<()> {
         for key in self.keys().iter() {
-            let _ = self.delete(key)?;
+            self.active_file.remove(key.clone())?;
         }
+        self.keys_dir.clear()?;
         Ok(())
     }
 
@@ -252,10 +293,12 @@ impl DataStore {
             let hints = fp.get_hints()?;
             for hint in hints {
                 if let Some(keys_dir_entry) = self.keys_dir.get(&hint.key()) {
-                    if keys_dir_entry.file_id == fp.file_id() {
-                        let data_entry = fp.read(hint.data_entry_position())?;
-                        let key_entry = merged_file_pair.write(&data_entry)?;
-                        self.keys_dir.insert(hint.key(), key_entry);
+                    if let KeyDirValueEntry::Persisted(keys_dir_entry) = keys_dir_entry {
+                        if keys_dir_entry.file_id == fp.file_id() {
+                            let data_entry = fp.read(hint.data_entry_position())?;
+                            let key_entry = merged_file_pair.write(&data_entry)?;
+                            self.keys_dir.insert(hint.key(), key_entry);
+                        }
                     }
                 }
             }
@@ -266,10 +309,21 @@ impl DataStore {
         fs_extra::remove_items(&mark_for_removal);
         Ok(())
     }
+
+    pub fn flush(&self, ) -> Result<()>{
+        //Todo remove
+        //let buffer :
+        for entry in self.buffer.iter(){
+            self.persist(entry.key().clone(),entry.value().to_vec())?;
+        }
+        //self.buffer.clear();
+        Ok(())
+    }
 }
 
 impl Drop for DataStore {
     fn drop(&mut self) {
+        self.flush().unwrap();
         self.lock_file.unlock().unwrap();
     }
 }
