@@ -1,30 +1,50 @@
 use crate::datastore::{DataStore, KeyDirEntry};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use anyhow::{Result, Error};
 use std::sync::Arc;
 use std::alloc::Global;
 use std::fs::read;
+use std::ops::{Range, RangeFrom};
+use std::fmt::{Display, Formatter};
 
 pub struct Notus {
+    dir : PathBuf,
+    temp : bool,
     store: Arc<DataStore>
+}
+
+impl Display for Notus {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.store.keys())
+    }
 }
 impl Notus {
     pub fn open<P : AsRef<Path>>(dir : P) -> Result<Self> {
-        let store = DataStore::open(dir)?;
+        let store = DataStore::open(dir.as_ref())?;
         Ok(Self {
+            dir: PathBuf::from(dir.as_ref()),
+            temp : false,
+            store: Arc::new(store)
+        })
+    }
+    pub fn temp<P : AsRef<Path>>(dir : P) -> Result<Self> {
+        let store = DataStore::open(dir.as_ref())?;
+        Ok(Self {
+            dir: PathBuf::from(dir.as_ref()),
+            temp: true,
             store: Arc::new(store)
         })
     }
     pub fn put(&self, key : Vec<u8>, value : Vec<u8>) -> Result<()> {
         self.store.put(key, value)
     }
-    pub fn get(&self, key : Vec<u8>) -> Result<Option<Vec<u8>>> {
+    pub fn get(&self, key : &Vec<u8>) -> Result<Option<Vec<u8>>> {
         if key.is_empty(){
             return Ok(None)
         }
         self.store.get(key)
     }
-    pub fn delete(&self, key : Vec<u8>) -> Result<()> {
+    pub fn delete(&self, key : &Vec<u8>) -> Result<()> {
         if key.is_empty(){
             return Ok(())
         }
@@ -39,14 +59,24 @@ impl Notus {
     }
 
     pub fn iter(&self) -> DBIterator {
-        DBIterator {
-            store: self.store.clone(),
-            inner: self.store.keys(),
-            cursor: 0
+       DBIterator::new(self.store.clone())
+    }
+
+    pub fn range(&self, range : RangeFrom<Vec<u8>>) -> DBIterator {
+        DBIterator::range(self.store.clone(), range)
+    }
+
+    pub fn prefix(&self, prefix : &Vec<u8>) -> DBIterator {
+        DBIterator::prefix(self.store.clone(), prefix)
+    }
+}
+impl Drop for Notus {
+    fn drop(&mut self) {
+        if self.temp {
+            fs_extra::dir::remove(self.dir.as_path());
         }
     }
 }
-
 pub struct DBIterator {
     store: Arc<DataStore>,
     inner : Vec<Vec<u8>>,
@@ -56,6 +86,24 @@ pub struct DBIterator {
 impl DBIterator {
     fn new(store : Arc<DataStore>) -> Self {
         let keys = store.keys();
+        Self {
+            store,
+            inner: keys,
+            cursor: 0
+        }
+    }
+
+    fn range(store : Arc<DataStore>, range : RangeFrom<Vec<u8>>) -> Self {
+        let keys = store.range(range);
+        Self {
+            store,
+            inner: keys,
+            cursor: 0
+        }
+    }
+
+    fn prefix(store : Arc<DataStore>, prefix : &Vec<u8>) -> Self {
+        let keys = store.prefix(prefix);
         Self {
             store,
             inner: keys,
@@ -73,14 +121,14 @@ impl Iterator for DBIterator {
                 return None
             }
             Some(key) => {
-                key.clone()
+                key
             }
         };
 
-        match self.store.get(key.clone()) {
+        match self.store.get(key) {
             Ok(Some(value)) => {
                 self.cursor += 1;
-                Some(Ok((key,value)))
+                Some(Ok((key.clone(),value)))
             }
             _ => {
                 None
@@ -114,14 +162,14 @@ impl DoubleEndedIterator for DBIterator {
                 return None
             }
             Some(key) => {
-                key.clone()
+                key
             }
         };
 
-        match self.store.get(key.clone()) {
+        match self.store.get(key) {
             Ok(Some(value)) => {
                 self.cursor += 1;
-                Some(Ok((key,value)))
+                Some(Ok((key.clone(),value)))
             }
             _ => {
                 None
@@ -130,51 +178,3 @@ impl DoubleEndedIterator for DBIterator {
     }
 }
 
-fn clean_up() {
-    fs_extra::dir::remove("./testdir/_test_monotonic_inserts");
-}
-
-#[test]
-fn monotonic_inserts() {
-    clean_up();
-    let db = Notus::open("./testdir/_test_monotonic_inserts").unwrap();
-
-    for len in [1_usize, 16, 32, 1024].iter() {
-        for i in 0_usize..*len {
-            let mut k = vec![];
-            for c in 0_usize..i {
-                k.push((c % 256) as u8);
-            }
-            db.put(k, vec![]).unwrap();
-        }
-
-
-        let count = db.iter().count();
-        assert_eq!(count, *len as usize);
-
-        let count2 = db.iter().rev().count();
-        assert_eq!(count2, *len as usize);
-
-        db.clear().unwrap();
-        //clean_up();
-    }
-
-
-    for len in [1_usize, 16, 32, 1024].iter() {
-        for i in (0_usize..*len).rev() {
-            let mut k = vec![];
-            for c in (0_usize..i).rev() {
-                k.push((c % 256) as u8);
-            }
-            db.put(k, vec![]).unwrap();
-        }
-
-        let count3 = db.iter().count();
-        assert_eq!(count3, *len as usize);
-
-        let count4 = db.iter().rev().count();
-        assert_eq!(count4, *len as usize);
-
-        db.clear().unwrap();
-    }
-}

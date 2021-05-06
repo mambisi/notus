@@ -9,7 +9,7 @@ use anyhow::Result;
 use crate::errors::NotusError;
 use std::sync::{RwLock, Arc, PoisonError, RwLockReadGuard};
 use std::alloc::Global;
-use std::ops::Range;
+use std::ops::{Range, RangeFrom};
 
 #[derive(Default, Debug, Clone)]
 pub struct KeyDirEntry {
@@ -77,7 +77,7 @@ impl KeysDir {
         }).collect()
     }
 
-    pub fn range(&self, range: Range<Vec<u8>>) -> Vec<Vec<u8>> {
+    pub fn range(&self, range: RangeFrom<Vec<u8>>) -> Vec<Vec<u8>> {
         let keys = self.keys.clone();
         let keys_dir_reader = match keys.read() {
             Ok(rdr) => {
@@ -102,7 +102,7 @@ impl KeysDir {
                 return vec![];
             }
         };
-        keys_dir_reader.range(prefix..).take_while(|(k, _)| k.starts_with(prefix)).map(|(k, _)| {
+        keys_dir_reader.range(prefix.clone()..).take_while(|(k, _)| k.starts_with(prefix)).map(|(k, _)| {
             k.clone()
         }).collect()
     }
@@ -182,8 +182,8 @@ impl DataStore {
         Ok(())
     }
 
-    pub fn get(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>> {
-        let key_dir_entry = match self.keys_dir.get(&key) {
+    pub fn get(&self, key: &Vec<u8>) -> Result<Option<Vec<u8>>> {
+        let key_dir_entry = match self.keys_dir.get(key) {
             None => {
                 return Ok(None);
             }
@@ -210,14 +210,14 @@ impl DataStore {
         Ok(Some(data_entry.value()))
     }
 
-    pub fn delete(&self, key: Vec<u8>) -> Result<()> {
+    pub fn delete(&self, key: &Vec<u8>) -> Result<()> {
         self.active_file.remove(key.clone())?;
-        self.keys_dir.remove(&key);
+        self.keys_dir.remove(key);
         Ok(())
     }
 
     pub fn clear(&self) -> Result<()> {
-        for key in self.keys() {
+        for key in self.keys().iter() {
             let _ = self.delete(key)?;
         }
         Ok(())
@@ -227,7 +227,7 @@ impl DataStore {
         self.keys_dir.keys()
     }
 
-    pub fn range(&self, range: Range<Vec<u8>>) -> Vec<Vec<u8>> {
+    pub fn range(&self, range: RangeFrom<Vec<u8>>) -> Vec<Vec<u8>> {
         self.keys_dir.range(range)
     }
 
@@ -284,7 +284,7 @@ mod tests {
     fn test_data_store() {
         let mut ds = DataStore::open("./testdir/_test_data_store").unwrap();
         ds.put(vec![1, 2, 3], vec![4, 5, 6]).unwrap();
-        println!("{:#?}", ds.get(vec![1, 2, 3]).unwrap());
+        println!("{:#?}", ds.get(&vec![1, 2, 3]).unwrap());
         clean_up()
     }
 
@@ -304,14 +304,14 @@ mod tests {
         {
             let mut ds = DataStore::open("./testdir/_test_data_store").unwrap();
             ds.put(vec![1, 2, 3], vec![9, 9, 6]).unwrap();
-            ds.delete(vec![3, 1, 2]).unwrap();
-            println!("{:?}", ds.get(vec![1, 2, 3]));
+            ds.delete(&vec![3, 1, 2]).unwrap();
+            println!("{:?}", ds.get(&vec![1, 2, 3]));
             println!("{:#?}", ds.keys());
         }
 
         {
             let mut ds = DataStore::open("./testdir/_test_data_store").unwrap();
-            ds.delete(vec![1, 2, 3]).unwrap();
+            ds.delete(&vec![1, 2, 3]).unwrap();
             println!("{:#?}", ds.keys());
         }
 
@@ -344,7 +344,7 @@ mod tests {
         {
             let mut ds = DataStore::open("./testdir/_test_data_merge_store").unwrap();
             ds.put(vec![1, 2, 3], vec![9, 9, 6]).unwrap();
-            ds.delete(vec![3, 1, 2]).unwrap();
+            ds.delete(&vec![3, 1, 2]).unwrap();
             keys_before_merge = ds.keys();
         }
 
