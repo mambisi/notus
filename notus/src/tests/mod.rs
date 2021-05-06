@@ -134,7 +134,7 @@ fn concurrent_tree_ops() {
                     let thread = thread::Builder::new()
                         .name(format!("t(thread: {} test: {})", tn, i))
                         .spawn(move || {
-                            println!("thread: {}", tn)
+                            println!("thread: {}", tn);
                             for i in
                                 (tn * N_PER_THREAD)..((tn + 1) * N_PER_THREAD)
                             {

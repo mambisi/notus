@@ -32,15 +32,8 @@ impl KeyDirEntry {
         }
     }
 }
-
-#[derive(Debug, Clone)]
-enum KeyDirValueEntry {
-    Persisted(KeyDirEntry),
-    Buffer,
-}
-
 pub struct KeysDir {
-    keys: RwLock<BTreeMap<Vec<u8>, KeyDirValueEntry>>
+    keys: RwLock<BTreeMap<Vec<u8>, KeyDirEntry>>
 }
 
 impl KeysDir {
@@ -48,18 +41,9 @@ impl KeysDir {
         let mut keys_dir_writer = self.keys.write().map_err(|e| {
             NotusError::RWLockPoisonError(format!("{}", e))
         })?;
-        keys_dir_writer.insert(key, KeyDirValueEntry::Persisted(value));
+        keys_dir_writer.insert(key, value);
         Ok(())
     }
-
-    pub fn buffer_insert(&self, key: Vec<u8>) -> Result<()> {
-        let mut keys_dir_writer = self.keys.write().map_err(|e| {
-            NotusError::RWLockPoisonError(format!("{}", e))
-        })?;
-        keys_dir_writer.insert(key, KeyDirValueEntry::Buffer);
-        Ok(())
-    }
-
     pub fn remove(&self, key: &[u8]) -> Result<()> {
         let mut keys_dir_writer = self.keys.write().map_err(|e| {
             NotusError::RWLockPoisonError(format!("{}", e))
@@ -118,7 +102,7 @@ impl KeysDir {
         }).collect()
     }
 
-    pub fn get(&self, key: &[u8]) -> Option<KeyDirValueEntry> {
+    pub fn get(&self, key: &[u8]) -> Option<KeyDirEntry> {
         let keys_dir_reader = match self.keys.read() {
             Ok(rdr) => {
                 rdr
@@ -156,9 +140,8 @@ pub struct DataStore {
     lock_file: File,
     dir: PathBuf,
     active_file: ActiveFilePair,
-    keys_dir: Arc<KeysDir>,
-    files_dir: Arc<RwLock<BTreeMap<String, FilePair>>>,
-    buffer: DashMap<Vec<u8>, Vec<u8>>,
+    keys_dir: KeysDir,
+    files_dir: RwLock<BTreeMap<String, FilePair>>,
 }
 
 impl DataStore {
@@ -171,9 +154,8 @@ impl DataStore {
             lock_file,
             dir: dir.as_ref().to_path_buf(),
             active_file: ActiveFilePair::from(active_file_pair)?,
-            keys_dir: Arc::new(keys_dir),
-            files_dir: Arc::new(RwLock::new(files_dir)),
-            buffer: Default::default(),
+            keys_dir,
+            files_dir:RwLock::new(files_dir),
         };
         instance.lock()?;
         Ok(instance)
@@ -187,13 +169,6 @@ impl DataStore {
     }
 
     pub fn put(&self, key: Vec<u8>, value: Vec<u8>) -> Result<()> {
-        self.buffer.insert(key.clone(), value);
-        self.keys_dir.buffer_insert(key);
-        Ok(())
-    }
-
-    fn persist(&self, key: Vec<u8>, value: Vec<u8>) -> Result<()> {
-        self.buffer.remove(&key);
         let data_entry = DataEntry::new(key.clone(), value);
         let key_dir_entry = self.active_file.write(&data_entry)?;
         self.keys_dir.insert(key, key_dir_entry);
@@ -205,30 +180,14 @@ impl DataStore {
             None => {
                 return Ok(None);
             }
-            Some(entry) => {
-                match entry {
-                    KeyDirValueEntry::Persisted(entry) => {
-                        entry
-                    }
-                    KeyDirValueEntry::Buffer => {
-                        return match self.buffer.get(key) {
-                            None => {
-                                Ok(None)
-                            }
-                            Some(value) => {
-                                Ok(Some(value.value().clone()))
-                            }
-                        };
-                    }
-                }
+            Some(value) => {
+               value
             }
         };
 
-        let files_dir = self.files_dir.clone();
-        let files_dir_rlock = files_dir.read().map_err(|e| {
+        let files_dir_rlock = self.files_dir.read().map_err(|e| {
             NotusError::RWLockPoisonError(format!("{}", e))
         })?;
-        ;
 
         let fp = match files_dir_rlock.get(&key_dir_entry.file_id) {
             None => {
@@ -272,11 +231,9 @@ impl DataStore {
         let merged_file_pair = ActiveFilePair::from(create_new_file_pair(self.dir.as_path())?)?;
         let mut mark_for_removal = Vec::new();
 
-        let files_dir = self.files_dir.clone();
-        let files_dir_rlock = files_dir.read().map_err(|e| {
+        let files_dir_rlock = self.files_dir.read().map_err(|e| {
             NotusError::RWLockPoisonError(format!("{}", e))
         })?;
-        ;
 
         for (_, fp) in files_dir_rlock.iter() {
             if fp.file_id() == self.active_file.file_id() {
@@ -285,12 +242,10 @@ impl DataStore {
             let hints = fp.get_hints()?;
             for hint in hints {
                 if let Some(keys_dir_entry) = self.keys_dir.get(&hint.key()) {
-                    if let KeyDirValueEntry::Persisted(keys_dir_entry) = keys_dir_entry {
-                        if keys_dir_entry.file_id == fp.file_id() {
-                            let data_entry = fp.read(hint.data_entry_position())?;
-                            let key_entry = merged_file_pair.write(&data_entry)?;
-                            self.keys_dir.insert(hint.key(), key_entry);
-                        }
+                    if keys_dir_entry.file_id == fp.file_id() {
+                        let data_entry = fp.read(hint.data_entry_position())?;
+                        let key_entry = merged_file_pair.write(&data_entry)?;
+                        self.keys_dir.insert(hint.key(), key_entry);
                     }
                 }
             }
@@ -303,12 +258,6 @@ impl DataStore {
     }
 
     pub fn flush(&self, ) -> Result<()>{
-        //Todo remove
-        //let buffer :
-        for entry in self.buffer.iter(){
-            self.persist(entry.key().clone(),entry.value().to_vec())?;
-        }
-        //self.buffer.clear();
         Ok(())
     }
 }

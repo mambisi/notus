@@ -14,7 +14,6 @@ pub struct Notus {
     dir : PathBuf,
     temp : bool,
     store: Arc<DataStore>,
-    dropped : Arc<AtomicBool>
 }
 
 impl Display for Notus {
@@ -24,49 +23,23 @@ impl Display for Notus {
 }
 impl Notus {
     pub fn open<P : AsRef<Path>>(dir : P) -> Result<Self> {
-        let dropper = Arc::new(AtomicBool::new(false));
         let store = Arc::new(DataStore::open(dir.as_ref())?);
         let instance = Self {
             dir: PathBuf::from(dir.as_ref()),
             temp : false,
             store,
-            dropped: dropper
         };
-        instance.start_workers();
-
         Ok(instance)
     }
 
-    fn start_workers(&self) {
-        let dropper = self.dropped.clone();
-        let store = self.store.clone();
-        thread::spawn( move || {
-            println!("started worker-thread");
-            loop {
-                let dropped = dropper.load(Ordering::Acquire);
-                if dropped {
-                    break
-                }
-                thread::sleep(Duration::from_millis(1));
-                store.flush();
-            }
-            println!("ended worker-thread");
-        });
-
-    }
     pub fn temp<P : AsRef<Path>>(dir : P) -> Result<Self> {
-        let dropper = Arc::new(AtomicBool::new(false));
         let store = Arc::new(DataStore::open(dir.as_ref())?);
         let instance = Self {
             dir: PathBuf::from(dir.as_ref()),
             temp: true,
             store,
-            dropped: dropper.clone()
         };
-
-        instance.start_workers();
         Ok(instance)
-
     }
     pub fn put(&self, key : Vec<u8>, value : Vec<u8>) -> Result<()> {
         self.store.put(key, value)
@@ -105,7 +78,6 @@ impl Notus {
 }
 impl Drop for Notus {
     fn drop(&mut self) {
-        self.dropped.store(true, Ordering::Release);
         if self.temp {
             fs_extra::dir::remove(self.dir.as_path());
         }
