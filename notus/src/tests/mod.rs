@@ -6,7 +6,7 @@ use log::{debug, warn};
 use anyhow::Error;
 use std::alloc::Global;
 
-const N_THREADS: usize = 10;
+const N_THREADS: usize = 1;
 const N_PER_THREAD: usize = 100;
 const N: usize = N_THREADS * N_PER_THREAD; // NB N should be multiple of N_THREADS
 const SPACE: usize = N;
@@ -154,7 +154,7 @@ fn concurrent_tree_ops() {
         }
 
         debug!("========== initial sets test {} ==========", i);
-        let t = Arc::new(Notus::temp("./testdir/_test_concurrent_tree_ops5").unwrap());
+        let t = Arc::new(Notus::temp("./testdir/_test_concurrent_tree_ops").unwrap());
         par! {t, |tree: &Notus, k: Vec<u8>| {
             if let Ok(None) = tree.get(&k) {
                 assert!(true)
@@ -179,7 +179,7 @@ fn concurrent_tree_ops() {
         }
 
         drop(t);
-        let t = Arc::new(Notus::temp("./testdir/_test_concurrent_tree_ops1").unwrap());
+        let t = Arc::new(Notus::temp("./testdir/_test_concurrent_tree_ops").unwrap());
 
         let n_scanned = t.iter().count();
         if n_scanned != N {
@@ -189,7 +189,7 @@ fn concurrent_tree_ops() {
                 i, n_scanned, N,
             );
         }
-
+        println!("{}", t);
         debug!("========== reading sets in test {} ==========", i);
         par! {t, |tree: &Notus, k: Vec<u8>| {
             if let Some(v) =  tree.get(&k).unwrap() {
@@ -203,7 +203,8 @@ fn concurrent_tree_ops() {
         }};
 
         drop(t);
-        let t = Arc::new(Notus::temp("./testdir/_test_concurrent_tree_ops6").unwrap());
+
+        let t = Arc::new(Notus::temp("./testdir/_test_concurrent_tree_ops").unwrap());
 
 
 
@@ -213,7 +214,7 @@ fn concurrent_tree_ops() {
         }};
 
         drop(t);
-        let t = Arc::new(Notus::temp("./testdir/_test_concurrent_tree_ops9").unwrap());
+        let t = Arc::new(Notus::temp("./testdir/_test_concurrent_tree_ops").unwrap());
 
 
         par! {t, |tree: &Notus, k: Vec<u8>| {
@@ -225,5 +226,7 @@ fn concurrent_tree_ops() {
             }
             //assert_eq!(tree.get(&k), Ok(None));
         }};
+
+        clean_up("_test_monotonic_inserts");
     }
 }
