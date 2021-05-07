@@ -1,7 +1,7 @@
 use anyhow::Result;
-use std::io::{Read};
-use crc::{Crc, CRC_32_CKSUM};
 use chrono::Utc;
+use crc::{Crc, CRC_32_CKSUM};
+use std::io::Read;
 pub const CRC_CKSUM: Crc<u32> = Crc::<u32>::new(&CRC_32_CKSUM);
 
 #[derive(Debug, Clone, PartialOrd, PartialEq)]
@@ -19,7 +19,9 @@ pub trait Encoder {
 }
 
 pub trait Decoder {
-    fn decode<R: Read>(rdr: &mut R) -> Result<Self> where Self: Sized;
+    fn decode<R: Read>(rdr: &mut R) -> Result<Self>
+    where
+        Self: Sized;
 }
 
 impl Encoder for DataEntry {
@@ -34,7 +36,10 @@ impl Encoder for DataEntry {
 }
 
 impl Decoder for DataEntry {
-    fn decode<R: Read>(rdr: &mut R) -> Result<Self> where Self: Sized {
+    fn decode<R: Read>(rdr: &mut R) -> Result<Self>
+    where
+        Self: Sized,
+    {
         let mut out = Self {
             crc: 0,
             timestamp: 0,
@@ -107,7 +112,6 @@ impl DataEntry {
     pub fn value(&self) -> Vec<u8> {
         self.value.to_owned()
     }
-
 }
 
 pub struct HintEntry {
@@ -128,7 +132,7 @@ impl HintEntry {
             key: entry.key.clone(),
         }
     }
-    pub fn tombstone(key : Vec<u8>) -> Self {
+    pub fn tombstone(key: Vec<u8>) -> Self {
         Self {
             timestamp: -1,
             key_size: key.len() as u64,
@@ -157,7 +161,6 @@ impl HintEntry {
     pub fn key(&self) -> Vec<u8> {
         self.key.to_owned()
     }
-
 }
 
 impl Encoder for HintEntry {
@@ -173,7 +176,10 @@ impl Encoder for HintEntry {
 }
 
 impl Decoder for HintEntry {
-    fn decode<R: Read>(rdr: &mut R) -> Result<Self> where Self: Sized {
+    fn decode<R: Read>(rdr: &mut R) -> Result<Self>
+    where
+        Self: Sized,
+    {
         let mut out = Self {
             timestamp: 0,
             key_size: 0,
@@ -202,16 +208,13 @@ impl Decoder for HintEntry {
         out.key = raw_key_bytes;
 
         Ok(out)
-
     }
 }
 
-
-
 #[cfg(test)]
 mod tests {
-    use crate::schema::{DataEntry, Encoder, Decoder};
-    use std::io::{Cursor};
+    use crate::schema::{DataEntry, Decoder, Encoder};
+    use std::io::Cursor;
 
     #[test]
     fn decode_encode_test() {
@@ -222,4 +225,3 @@ mod tests {
         println!("{}", d.check_crc())
     }
 }
-

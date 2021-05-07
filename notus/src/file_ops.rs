@@ -1,15 +1,15 @@
-use std::path::{Path, PathBuf};
+use anyhow::Result;
 use chrono::Utc;
-use std::fs::{OpenOptions, File};
-use std::io::{BufReader, Seek, SeekFrom, BufWriter, Write};
 use fs_extra::dir::DirOptions;
 use std::collections::BTreeMap;
-use anyhow::{Result};
+use std::fs::{File, OpenOptions};
+use std::io::{BufReader, BufWriter, Seek, SeekFrom, Write};
+use std::path::{Path, PathBuf};
 
-use crate::schema::{HintEntry, DataEntry, Decoder, Encoder};
 use crate::datastore::{KeyDirEntry, KeysDir, RawKey};
-use fs2::FileExt;
 use crate::errors::NotusError;
+use crate::schema::{DataEntry, Decoder, Encoder, HintEntry};
+use fs2::FileExt;
 
 const DATA_FILE_EXTENSION: &str = "data";
 const HINT_FILE_EXTENSION: &str = "hint";
@@ -56,17 +56,17 @@ impl FilePair {
         let mut rdr = BufReader::new(hint_file);
         while let Ok(hint_entry) = HintEntry::decode(&mut rdr) {
             if hint_entry.is_deleted() {
-                let raw_key : RawKey =  bincode::deserialize(&hint_entry.key())?;
-                keys_dir.remove( raw_key.0,&raw_key.1);
+                let raw_key: RawKey = bincode::deserialize(&hint_entry.key())?;
+                keys_dir.remove(raw_key.0, &raw_key.1);
             } else {
                 let key_dir_entry = KeyDirEntry::new(
                     self.file_id.to_string(),
                     hint_entry.key_size(),
                     hint_entry.value_size(),
-                    hint_entry.data_entry_position()
+                    hint_entry.data_entry_position(),
                 );
-                let raw_key : RawKey =  bincode::deserialize(&hint_entry.key())?;
-                keys_dir.insert( raw_key.0,raw_key.1, key_dir_entry);
+                let raw_key: RawKey = bincode::deserialize(&hint_entry.key())?;
+                keys_dir.insert(raw_key.0, raw_key.1, key_dir_entry);
             }
         }
         Ok(())
@@ -93,11 +93,16 @@ pub struct ActiveFilePair {
     file_pair: FilePair,
 }
 
-
 impl ActiveFilePair {
     pub fn from(file_pair: FilePair) -> Result<Self> {
-        let data_file = OpenOptions::new().write(true).create(true).open(&file_pair.data_file_path.as_path())?;
-        let hint_file = OpenOptions::new().write(true).create(true).open(&file_pair.hint_file_path.as_path())?;
+        let data_file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .open(&file_pair.data_file_path.as_path())?;
+        let hint_file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .open(&file_pair.hint_file_path.as_path())?;
         Ok(Self {
             hint_file,
             data_file,
@@ -151,11 +156,12 @@ impl ActiveFilePair {
         self.data_file.unlock()?;
         self.hint_file.unlock()?;
 
-
-        Ok(KeyDirEntry::new(self.file_pair.file_id.to_string(),
-                            hint_entry.key_size(),
-                            hint_entry.value_size(),
-                            data_entry_position))
+        Ok(KeyDirEntry::new(
+            self.file_pair.file_id.to_string(),
+            hint_entry.key_size(),
+            hint_entry.value_size(),
+            data_entry_position,
+        ))
     }
 
     pub fn remove(&self, key: Vec<u8>) -> Result<()> {
@@ -184,8 +190,14 @@ pub fn create_new_file_pair<P: AsRef<Path>>(dir: P) -> anyhow::Result<FilePair> 
     hint_file_path.push(format!("{}.{}", file_name, HINT_FILE_EXTENSION));
     hint_file_path.set_extension(HINT_FILE_EXTENSION);
 
-    OpenOptions::new().create_new(true).write(true).open(data_file_path.as_path())?;
-    OpenOptions::new().create_new(true).write(true).open(hint_file_path.as_path())?;
+    OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(data_file_path.as_path())?;
+    OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(hint_file_path.as_path())?;
 
     Ok(FilePair {
         data_file_path,
@@ -199,7 +211,11 @@ pub fn get_lock_file<P: AsRef<Path>>(dir: P) -> anyhow::Result<File> {
     lock_file_path.push(dir.as_ref());
     lock_file_path.push("nutos.lock");
     fs_extra::dir::create_all(dir.as_ref(), false)?;
-    let file = OpenOptions::new().write(true).read(true).create(true).open(lock_file_path.as_path())?;
+    let file = OpenOptions::new()
+        .write(true)
+        .read(true)
+        .create(true)
+        .open(lock_file_path.as_path())?;
     Ok(file)
 }
 
@@ -211,7 +227,8 @@ pub fn fetch_file_pairs<P: AsRef<Path>>(dir: P) -> anyhow::Result<BTreeMap<Strin
     let dir_content = fs_extra::dir::get_dir_content2(dir, &option)?;
     for file in dir_content.files.iter() {
         let file_path = Path::new(file);
-        let file_extension = String::from(file_path.extension().unwrap_or_default().to_string_lossy());
+        let file_extension =
+            String::from(file_path.extension().unwrap_or_default().to_string_lossy());
         match file_extension.as_str() {
             DATA_FILE_EXTENSION => {}
             HINT_FILE_EXTENSION => {}
@@ -222,20 +239,17 @@ pub fn fetch_file_pairs<P: AsRef<Path>>(dir: P) -> anyhow::Result<BTreeMap<Strin
 
         let file_name = String::from(file_path.file_name().unwrap().to_string_lossy());
         let file_name = &file_name[..file_name.len() - 5];
-        let file_pair = file_pairs.entry(file_name.to_owned()).or_insert(FilePair::new(file_name));
+        let file_pair = file_pairs
+            .entry(file_name.to_owned())
+            .or_insert(FilePair::new(file_name));
         match file_extension.as_str() {
-            DATA_FILE_EXTENSION => {
-                file_pair.data_file_path = file_path.to_path_buf()
-            }
-            HINT_FILE_EXTENSION => {
-                file_pair.hint_file_path = file_path.to_path_buf()
-            }
+            DATA_FILE_EXTENSION => file_pair.data_file_path = file_path.to_path_buf(),
+            HINT_FILE_EXTENSION => file_pair.hint_file_path = file_path.to_path_buf(),
             _ => {}
         };
     }
     Ok(file_pairs)
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -256,4 +270,3 @@ mod tests {
         fs_extra::dir::remove("./testdir");
     }
 }
-

@@ -1,13 +1,15 @@
-
 pub fn setup_logger() {
     use std::io::Write;
 
     fn tn() -> String {
-        std::thread::current().name().unwrap_or("unknown").to_owned()
+        std::thread::current()
+            .name()
+            .unwrap_or("unknown")
+            .to_owned()
     }
 
     #[cfg(feature = "pretty_backtrace")]
-        color_backtrace::install();
+    color_backtrace::install();
 
     let mut builder = env_logger::Builder::new();
     builder

@@ -1,9 +1,9 @@
 #![feature(allocator_api)]
-mod schema;
-mod file_ops;
 mod datastore;
-mod nutos;
 mod errors;
+mod file_ops;
+mod nutos;
+mod schema;
 
 #[cfg(test)]
 mod tests;

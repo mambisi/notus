@@ -1,10 +1,10 @@
 mod common;
 
 use crate::nutos::Notus;
-use std::sync::Arc;
-use log::{debug, warn};
 use anyhow::Error;
+use log::{debug, warn};
 use std::alloc::Global;
+use std::sync::Arc;
 
 const N_THREADS: usize = 10;
 const N_PER_THREAD: usize = 100;
@@ -19,7 +19,7 @@ fn kv(i: usize) -> Vec<u8> {
     k.to_vec()
 }
 
-fn clean_up(dir : &str) {
+fn clean_up(dir: &str) {
     fs_extra::dir::remove(format!("./testdir/{}", dir));
 }
 
@@ -37,7 +37,6 @@ fn monotonic_inserts() {
             db.put(k, vec![]).unwrap();
         }
 
-
         let count = db.iter().count();
         assert_eq!(count, *len as usize);
 
@@ -47,7 +46,6 @@ fn monotonic_inserts() {
         db.clear().unwrap();
         //clean_up();
     }
-
 
     for len in [1_usize, 16, 32, 1024].iter() {
         for i in (0_usize..*len).rev() {
@@ -122,7 +120,6 @@ fn concurrent_tree_ops() {
 
     common::setup_logger();
 
-
     for i in 0..INTENSITY {
         debug!("beginning test {}", i);
 
@@ -135,9 +132,7 @@ fn concurrent_tree_ops() {
                         .name(format!("t(thread: {} test: {})", tn, i))
                         .spawn(move || {
                             println!("thread: {}", tn);
-                            for i in
-                                (tn * N_PER_THREAD)..((tn + 1) * N_PER_THREAD)
-                            {
+                            for i in (tn * N_PER_THREAD)..((tn + 1) * N_PER_THREAD) {
                                 let k = kv(i);
                                 $f(&*tree, k);
                             }
@@ -206,8 +201,6 @@ fn concurrent_tree_ops() {
 
         let t = Arc::new(Notus::temp("./testdir/_test_concurrent_tree_ops").unwrap());
 
-
-
         debug!("========== deleting in test {} ==========", i);
         par! {t, |tree: &Notus, k: Vec<u8>| {
             tree.delete(&k).unwrap();
@@ -215,7 +208,6 @@ fn concurrent_tree_ops() {
 
         drop(t);
         let t = Arc::new(Notus::temp("./testdir/_test_concurrent_tree_ops").unwrap());
-
 
         par! {t, |tree: &Notus, k: Vec<u8>| {
             if let Ok(None) = tree.get(&k) {
@@ -232,10 +224,11 @@ fn concurrent_tree_ops() {
 }
 
 fn concatenate_merge(
-    _key: &[u8],               // the key being merged
-    old_value: Option<Vec<u8>>,  // the previous value, if one existed
-    merged_bytes: &[u8]        // the new bytes being merged in
-) -> Option<Vec<u8>> {       // set the new value, return None to delete
+    _key: &[u8],                // the key being merged
+    old_value: Option<Vec<u8>>, // the previous value, if one existed
+    merged_bytes: &[u8],        // the new bytes being merged in
+) -> Option<Vec<u8>> {
+    // set the new value, return None to delete
     let mut ret = old_value.unwrap_or_else(|| vec![]);
 
     ret.extend_from_slice(merged_bytes);
@@ -243,8 +236,7 @@ fn concatenate_merge(
     Some(ret)
 }
 #[test]
-fn test_merge_operator(){
-
+fn test_merge_operator() {
     clean_up("_test_merge_operator");
     let db = Notus::temp("./testdir/_test_merge_operator").unwrap();
 
@@ -252,17 +244,17 @@ fn test_merge_operator(){
 
     db.put(k.to_vec(), vec![0]);
     db.merge(concatenate_merge, k.to_vec(), vec![1]);
-    db.merge(concatenate_merge,k.to_vec(), vec![2]);
+    db.merge(concatenate_merge, k.to_vec(), vec![2]);
     assert_eq!(db.get(&k.to_vec()).unwrap().unwrap(), vec![0, 1, 2]);
 
-// Replace previously merged data. The merge function will not be called.
+    // Replace previously merged data. The merge function will not be called.
     db.put(k.to_vec(), vec![3]);
     assert_eq!(db.get(&k.to_vec()).unwrap().unwrap(), vec![3]);
 
-// Merges on non-present values will cause the merge function to be called
-// with `old_value == None`. If the merge function returns something (which it
-// does, in this case) a new value will be inserted.
+    // Merges on non-present values will cause the merge function to be called
+    // with `old_value == None`. If the merge function returns something (which it
+    // does, in this case) a new value will be inserted.
     db.delete(&k.to_vec());
-    db.merge(concatenate_merge,k.to_vec(), vec![4]);
+    db.merge(concatenate_merge, k.to_vec(), vec![4]);
     assert_eq!(db.get(&k.to_vec()).unwrap().unwrap(), vec![4]);
 }

@@ -1,15 +1,15 @@
-use crate::datastore::{DataStore, RawKey, DEFAULT_INDEX, MergeOperator};
-use std::path::{Path, PathBuf};
-use anyhow::{Result};
-use std::sync::{Arc, RwLock};
-use std::ops::{ RangeFrom};
+use crate::datastore::{DataStore, MergeOperator, RawKey, DEFAULT_INDEX};
+use crate::errors::NotusError;
+use anyhow::Result;
+use std::alloc::Global;
+use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
+use std::ops::RangeFrom;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::Duration;
-use std::collections::HashMap;
-use crate::errors::NotusError;
-use std::alloc::Global;
 
 pub struct Notus {
     dir: PathBuf,
@@ -23,9 +23,7 @@ impl Display for Notus {
         let mut out = String::new();
         for res in self.iter() {
             match res {
-                Ok((k, v)) => {
-                    out.push_str(&format!("{:?} : {:?} \n", k, v))
-                }
+                Ok((k, v)) => out.push_str(&format!("{:?} : {:?} \n", k, v)),
                 Err(_) => {}
             }
         }
@@ -74,21 +72,23 @@ impl Notus {
         Ok(instance)
     }
     pub fn put(&self, key: Vec<u8>, value: Vec<u8>) -> Result<()> {
-        self.store.put(RawKey(DEFAULT_INDEX.to_string(), key), value)
+        self.store
+            .put(RawKey(DEFAULT_INDEX.to_string(), key), value)
     }
     pub fn get(&self, key: &Vec<u8>) -> Result<Option<Vec<u8>>> {
         if key.is_empty() {
             return Ok(None);
         }
-        self.store.get(&RawKey(DEFAULT_INDEX.to_string(),key.clone()))
+        self.store
+            .get(&RawKey(DEFAULT_INDEX.to_string(), key.clone()))
     }
     pub fn delete(&self, key: &Vec<u8>) -> Result<()> {
         if key.is_empty() {
             return Ok(());
         }
-        self.store.delete(&RawKey(DEFAULT_INDEX.to_string(),key.clone()))
+        self.store
+            .delete(&RawKey(DEFAULT_INDEX.to_string(), key.clone()))
     }
-
 
     pub fn compact(&self) -> Result<()> {
         self.store.merge()
@@ -98,30 +98,39 @@ impl Notus {
         self.store.clear()
     }
 
-    pub fn put_cf(&self, column : &str, key: Vec<u8>, value: Vec<u8>) -> Result<()> {
+    pub fn put_cf(&self, column: &str, key: Vec<u8>, value: Vec<u8>) -> Result<()> {
         self.store.put(RawKey(column.to_string(), key), value)
     }
-    pub fn merge_cf(&self,  merge_operator: impl MergeOperator + 'static, column : &str, key: Vec<u8>, value: Vec<u8>) -> Result<(), NotusError> {
-
+    pub fn merge_cf(
+        &self,
+        merge_operator: impl MergeOperator + 'static,
+        column: &str,
+        key: Vec<u8>,
+        value: Vec<u8>,
+    ) -> Result<(), NotusError> {
         let old_value = self.store.get(&RawKey(column.to_string(), key.clone()))?;
 
-        let merged_value  = merge_operator(&key,old_value,&value);
+        let merged_value = merge_operator(&key, old_value, &value);
         match merged_value {
             None => {
-                self.delete_cf(column,&key);
+                self.delete_cf(column, &key);
             }
             Some(value) => {
-                self.put_cf(column,key, value);
+                self.put_cf(column, key, value);
             }
         }
         Ok(())
-
     }
-    pub fn merge(&self, merge_operator: impl MergeOperator + 'static, key: Vec<u8>, value: Vec<u8>) -> Result<(), NotusError> {
+    pub fn merge(
+        &self,
+        merge_operator: impl MergeOperator + 'static,
+        key: Vec<u8>,
+        value: Vec<u8>,
+    ) -> Result<(), NotusError> {
         let column = DEFAULT_INDEX.to_string();
         let old_value = self.store.get(&RawKey(column.clone(), key.clone()))?;
 
-        let merged_value  = merge_operator(&key,old_value,&value);
+        let merged_value = merge_operator(&key, old_value, &value);
 
         match merged_value {
             None => {
@@ -132,30 +141,29 @@ impl Notus {
             }
         }
         Ok(())
-
     }
-    pub fn get_cf(&self, column : &str, key: &Vec<u8>) -> Result<Option<Vec<u8>>> {
+    pub fn get_cf(&self, column: &str, key: &Vec<u8>) -> Result<Option<Vec<u8>>> {
         if key.is_empty() {
             return Ok(None);
         }
-        self.store.get(&RawKey(column.to_string(),key.clone()))
+        self.store.get(&RawKey(column.to_string(), key.clone()))
     }
-    pub fn delete_cf(&self, column : &str, key: &Vec<u8>) -> Result<()> {
+    pub fn delete_cf(&self, column: &str, key: &Vec<u8>) -> Result<()> {
         if key.is_empty() {
             return Ok(());
         }
-        self.store.delete(&RawKey(column.to_string(),key.clone()))
+        self.store.delete(&RawKey(column.to_string(), key.clone()))
     }
 
-    pub fn range_cf(&self, column : &str, range: RangeFrom<Vec<u8>>) -> DBIterator {
-        DBIterator::range(column,self.store.clone(), range)
+    pub fn range_cf(&self, column: &str, range: RangeFrom<Vec<u8>>) -> DBIterator {
+        DBIterator::range(column, self.store.clone(), range)
     }
 
-    pub fn prefix_cf(&self, column : &str, prefix: &Vec<u8>) -> DBIterator {
+    pub fn prefix_cf(&self, column: &str, prefix: &Vec<u8>) -> DBIterator {
         DBIterator::prefix(column, self.store.clone(), prefix)
     }
 
-    pub fn iter_cf(&self, column : &str,) -> DBIterator {
+    pub fn iter_cf(&self, column: &str) -> DBIterator {
         DBIterator::new(column, self.store.clone())
     }
 
@@ -164,7 +172,7 @@ impl Notus {
     }
 
     pub fn range(&self, range: RangeFrom<Vec<u8>>) -> DBIterator {
-        DBIterator::range(DEFAULT_INDEX,self.store.clone(), range)
+        DBIterator::range(DEFAULT_INDEX, self.store.clone(), range)
     }
 
     pub fn prefix(&self, prefix: &Vec<u8>) -> DBIterator {
@@ -182,14 +190,14 @@ impl Drop for Notus {
 }
 
 pub struct DBIterator {
-    column : String,
+    column: String,
     store: Arc<DataStore>,
     inner: Vec<Vec<u8>>,
     cursor: usize,
 }
 
 impl DBIterator {
-    fn new(  column : &str, store: Arc<DataStore>) -> Self {
+    fn new(column: &str, store: Arc<DataStore>) -> Self {
         let keys = store.keys(column);
         Self {
             column: column.to_string(),
@@ -199,8 +207,8 @@ impl DBIterator {
         }
     }
 
-    fn range( column : &str, store: Arc<DataStore>, range: RangeFrom<Vec<u8>>) -> Self {
-        let keys = store.range(column,range);
+    fn range(column: &str, store: Arc<DataStore>, range: RangeFrom<Vec<u8>>) -> Self {
+        let keys = store.range(column, range);
         Self {
             column: column.to_string(),
             store,
@@ -209,8 +217,8 @@ impl DBIterator {
         }
     }
 
-    fn prefix( column : &str, store: Arc<DataStore>, prefix: &Vec<u8>) -> Self {
-        let keys = store.prefix(column,prefix);
+    fn prefix(column: &str, store: Arc<DataStore>, prefix: &Vec<u8>) -> Self {
+        let keys = store.prefix(column, prefix);
         Self {
             column: column.to_string(),
             store,
@@ -228,18 +236,14 @@ impl Iterator for DBIterator {
             None => {
                 return None;
             }
-            Some(key) => {
-                key
-            }
+            Some(key) => key,
         };
         match self.store.get(&RawKey(self.column.clone(), key.clone())) {
             Ok(Some(value)) => {
                 self.cursor += 1;
                 Some(Ok((key.clone(), value)))
             }
-            _ => {
-                None
-            }
+            _ => None,
         }
     }
 }
@@ -250,25 +254,19 @@ impl DoubleEndedIterator for DBIterator {
             None => {
                 return None;
             }
-            Some(position) => {
-                match position.checked_sub(self.cursor) {
-                    None => {
-                        return None;
-                    }
-                    Some(position) => {
-                        position
-                    }
+            Some(position) => match position.checked_sub(self.cursor) {
+                None => {
+                    return None;
                 }
-            }
+                Some(position) => position,
+            },
         };
 
         let key = match self.inner.get(position) {
             None => {
                 return None;
             }
-            Some(key) => {
-                key
-            }
+            Some(key) => key,
         };
 
         match self.store.get(&RawKey(self.column.clone(), key.clone())) {
@@ -276,12 +274,7 @@ impl DoubleEndedIterator for DBIterator {
                 self.cursor += 1;
                 Some(Ok((key.clone(), value)))
             }
-            _ => {
-                None
-            }
+            _ => None,
         }
     }
 }
-
-
-
