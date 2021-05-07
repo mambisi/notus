@@ -200,6 +200,21 @@ impl KeysDir {
             None
         }
     }
+
+    pub fn contains(&self, index: &str, key: &[u8]) -> Result<bool, NotusError> {
+        let keys_dir_reader = match self.keys.read() {
+            Ok(rdr) => rdr,
+            Err(error) => {
+                return Err(NotusError::RWLockPoisonError(format!("{}", error)));
+            }
+        };
+
+        if let Some(index) = keys_dir_reader.get(index) {
+            Ok(index.contains_key(key))
+        } else {
+            Ok(false)
+        }
+    }
 }
 
 impl KeysDir {
@@ -302,6 +317,21 @@ impl DataStore {
         self.active_file.remove(key.clone())?;
         self.keys_dir.remove(raw_key.0.clone(), &raw_key.1);
         Ok(())
+    }
+
+    pub fn contains(&self, raw_key: &RawKey) -> Result<bool> {
+        let mut buffer = self
+            .buffer
+            .read()
+            .map_err(|e| NotusError::RWLockPoisonError(format!("{}", e)))?;
+        let key = bincode::serialize(raw_key)?;
+
+        if buffer.contains_key(&key) {
+            return Ok(true)
+        }
+
+        let result = self.keys_dir.contains(&raw_key.0, &raw_key.1)?;
+        Ok(result)
     }
 
     pub fn clear(&self) -> Result<()> {

@@ -82,6 +82,15 @@ impl Notus {
         self.store
             .get(&RawKey(DEFAULT_INDEX.to_string(), key.clone()))
     }
+
+    pub fn contains(&self, key: &Vec<u8>) -> Result<bool> {
+        if key.is_empty() {
+            return Ok(false);
+        }
+        self.store
+            .contains(&RawKey(DEFAULT_INDEX.to_string(), key.clone()))
+    }
+
     pub fn delete(&self, key: &Vec<u8>) -> Result<()> {
         if key.is_empty() {
             return Ok(());
@@ -148,6 +157,15 @@ impl Notus {
         }
         self.store.get(&RawKey(column.to_string(), key.clone()))
     }
+
+    pub fn contains_cf(&self,  column: &str, key: &Vec<u8>) -> Result<bool> {
+        if key.is_empty() {
+            return Ok(false);
+        }
+        self.store
+            .contains(&RawKey(column.to_string(), key.clone()))
+    }
+
     pub fn delete_cf(&self, column: &str, key: &Vec<u8>) -> Result<()> {
         if key.is_empty() {
             return Ok(());
