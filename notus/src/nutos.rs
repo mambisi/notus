@@ -4,13 +4,13 @@ use anyhow::Result;
 use std::alloc::Global;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
-use std::ops::RangeFrom;
+use std::ops::{RangeFrom, Range, RangeBounds};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::Duration;
-
+use std::ops::Bound;
 pub struct Notus {
     dir: PathBuf,
     temp: bool,
@@ -173,7 +173,7 @@ impl Notus {
         self.store.delete(&RawKey(column.to_string(), key.clone()))
     }
 
-    pub fn range_cf(&self, column: &str, range: RangeFrom<Vec<u8>>) -> DBIterator {
+    pub fn range_cf<R>(&self, column: &str, range : R) -> DBIterator where R : RangeBounds<Vec<u8>>{
         DBIterator::range(column, self.store.clone(), range)
     }
 
@@ -189,7 +189,7 @@ impl Notus {
         DBIterator::new(DEFAULT_INDEX, self.store.clone())
     }
 
-    pub fn range(&self, range: RangeFrom<Vec<u8>>) -> DBIterator {
+    pub fn range<R>(&self, range :R) -> DBIterator where R : RangeBounds<Vec<u8>> {
         DBIterator::range(DEFAULT_INDEX, self.store.clone(), range)
     }
 
@@ -225,7 +225,7 @@ impl DBIterator {
         }
     }
 
-    fn range(column: &str, store: Arc<DataStore>, range: RangeFrom<Vec<u8>>) -> Self {
+    fn range<R>(column: &str, store: Arc<DataStore>, range : R) -> Self where  R : RangeBounds<Vec<u8>> {
         let keys = store.range(column, range);
         Self {
             column: column.to_string(),

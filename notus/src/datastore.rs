@@ -11,9 +11,10 @@ use serde::{Deserialize, Serialize};
 use std::alloc::Global;
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
-use std::ops::RangeFrom;
+use std::ops::{RangeFrom, RangeBounds, Range, RangeInclusive, RangeToInclusive, RangeFull, Bound};
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
+use std::ops;
 
 pub trait MergeOperator: Fn(&[u8], Option<Vec<u8>>, &[u8]) -> Option<Vec<u8>> {}
 
@@ -146,7 +147,7 @@ impl KeysDir {
         keys
     }
 
-    pub fn range(&self, index: &str, range: RangeFrom<Vec<u8>>) -> Vec<Vec<u8>> {
+    pub fn range<R>(&self, index: &str, range : R) -> Vec<Vec<u8>> where R : RangeBounds<Vec<u8>> {
         let keys_dir_reader = match self.keys.read() {
             Ok(rdr) => rdr,
             Err(_) => {
@@ -355,7 +356,7 @@ impl DataStore {
         self.keys_dir.raw_keys()
     }
 
-    pub fn range(&self, column: &str, range: RangeFrom<Vec<u8>>) -> Vec<Vec<u8>> {
+    pub fn range<R>(&self, column: &str, range : R) -> Vec<Vec<u8>>  where R: RangeBounds<Vec<u8>>{
         self.keys_dir.range(column, range)
     }
 
