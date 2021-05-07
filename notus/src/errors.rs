@@ -7,6 +7,8 @@ pub enum NotusError {
     IOError(#[from] io::Error),
     #[error("Data Corrupt")]
     CorruptValue,
+    #[error("Merge failed")]
+    MergeError,
     #[error("failed to lock nutos director {0}")]
     LockFailed(String),
     #[error("RW lock poison {0}")]

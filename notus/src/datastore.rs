@@ -14,11 +14,11 @@ use std::alloc::Global;
 use bincode::ErrorKind;
 
 pub trait MergeOperator:
-Fn(&[u8], Option<&[u8]>, &[u8]) -> Option<Vec<u8>>
+Fn(&[u8], Option<Vec<u8>>, &[u8]) -> Option<Vec<u8>>
 {}
 
 impl<F> MergeOperator for F where
-    F: Fn(&[u8], Option<&[u8]>, &[u8]) -> Option<Vec<u8>>
+    F: Fn(&[u8], Option<Vec<u8>>, &[u8]) -> Option<Vec<u8>>
 {}
 
 pub struct Column {

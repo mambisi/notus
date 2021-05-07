@@ -1,19 +1,21 @@
-use crate::datastore::{DataStore, RawKey, DEFAULT_INDEX};
+use crate::datastore::{DataStore, RawKey, DEFAULT_INDEX, MergeOperator};
 use std::path::{Path, PathBuf};
 use anyhow::{Result};
-use std::sync::{Arc};
+use std::sync::{Arc, RwLock};
 use std::ops::{ RangeFrom};
 use std::fmt::{Display, Formatter};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
+use std::collections::HashMap;
+use crate::errors::NotusError;
+use std::alloc::Global;
 
 pub struct Notus {
     dir: PathBuf,
     temp: bool,
     store: Arc<DataStore>,
     dropped: Arc<AtomicBool>,
-
 }
 
 impl Display for Notus {
@@ -87,8 +89,50 @@ impl Notus {
         self.store.delete(&RawKey(DEFAULT_INDEX.to_string(),key.clone()))
     }
 
+
+    pub fn compact(&self) -> Result<()> {
+        self.store.merge()
+    }
+
+    pub fn clear(&self) -> Result<()> {
+        self.store.clear()
+    }
+
     pub fn put_cf(&self, column : &str, key: Vec<u8>, value: Vec<u8>) -> Result<()> {
         self.store.put(RawKey(column.to_string(), key), value)
+    }
+    pub fn merge_cf(&self,  merge_operator: impl MergeOperator + 'static, column : &str, key: Vec<u8>, value: Vec<u8>) -> Result<(), NotusError> {
+
+        let old_value = self.store.get(&RawKey(column.to_string(), key.clone()))?;
+
+        let merged_value  = merge_operator(&key,old_value,&value);
+        match merged_value {
+            None => {
+                self.delete_cf(column,&key);
+            }
+            Some(value) => {
+                self.put_cf(column,key, value);
+            }
+        }
+        Ok(())
+
+    }
+    pub fn merge(&self, merge_operator: impl MergeOperator + 'static, key: Vec<u8>, value: Vec<u8>) -> Result<(), NotusError> {
+        let column = DEFAULT_INDEX.to_string();
+        let old_value = self.store.get(&RawKey(column.clone(), key.clone()))?;
+
+        let merged_value  = merge_operator(&key,old_value,&value);
+
+        match merged_value {
+            None => {
+                self.delete(&key);
+            }
+            Some(value) => {
+                self.put(key, value);
+            }
+        }
+        Ok(())
+
     }
     pub fn get_cf(&self, column : &str, key: &Vec<u8>) -> Result<Option<Vec<u8>>> {
         if key.is_empty() {
@@ -102,14 +146,6 @@ impl Notus {
         }
         self.store.delete(&RawKey(column.to_string(),key.clone()))
     }
-    pub fn merge(&self) -> Result<()> {
-        self.store.merge()
-    }
-
-    pub fn clear(&self) -> Result<()> {
-        self.store.clear()
-    }
-
 
     pub fn range_cf(&self, column : &str, range: RangeFrom<Vec<u8>>) -> DBIterator {
         DBIterator::range(column,self.store.clone(), range)
@@ -246,4 +282,6 @@ impl DoubleEndedIterator for DBIterator {
         }
     }
 }
+
+
 

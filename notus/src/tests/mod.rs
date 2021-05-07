@@ -230,3 +230,39 @@ fn concurrent_tree_ops() {
         clean_up("_test_monotonic_inserts");
     }
 }
+
+fn concatenate_merge(
+    _key: &[u8],               // the key being merged
+    old_value: Option<Vec<u8>>,  // the previous value, if one existed
+    merged_bytes: &[u8]        // the new bytes being merged in
+) -> Option<Vec<u8>> {       // set the new value, return None to delete
+    let mut ret = old_value.unwrap_or_else(|| vec![]);
+
+    ret.extend_from_slice(merged_bytes);
+
+    Some(ret)
+}
+#[test]
+fn test_merge_operator(){
+
+    clean_up("_test_merge_operator");
+    let db = Notus::temp("./testdir/_test_merge_operator").unwrap();
+
+    let k = b"k1";
+
+    db.put(k.to_vec(), vec![0]);
+    db.merge(concatenate_merge, k.to_vec(), vec![1]);
+    db.merge(concatenate_merge,k.to_vec(), vec![2]);
+    assert_eq!(db.get(&k.to_vec()).unwrap().unwrap(), vec![0, 1, 2]);
+
+// Replace previously merged data. The merge function will not be called.
+    db.put(k.to_vec(), vec![3]);
+    assert_eq!(db.get(&k.to_vec()).unwrap().unwrap(), vec![3]);
+
+// Merges on non-present values will cause the merge function to be called
+// with `old_value == None`. If the merge function returns something (which it
+// does, in this case) a new value will be inserted.
+    db.delete(&k.to_vec());
+    db.merge(concatenate_merge,k.to_vec(), vec![4]);
+    assert_eq!(db.get(&k.to_vec()).unwrap().unwrap(), vec![4]);
+}
