@@ -4,7 +4,7 @@ use std::fs::{OpenOptions, File};
 use std::io::{BufReader, Seek, SeekFrom, BufWriter, Write};
 use fs_extra::dir::DirOptions;
 use std::collections::BTreeMap;
-use anyhow::{bail, Error, Result};
+use anyhow::{Result};
 
 use crate::schema::{HintEntry, DataEntry, Decoder, Encoder};
 use crate::datastore::{KeyDirEntry, KeysDir};
@@ -197,7 +197,7 @@ pub fn get_lock_file<P: AsRef<Path>>(dir: P) -> anyhow::Result<File> {
     lock_file_path.push(dir.as_ref());
     lock_file_path.push("nutos.lock");
     fs_extra::dir::create_all(dir.as_ref(), false)?;
-    let mut file = OpenOptions::new().write(true).read(true).create(true).open(lock_file_path.as_path())?;
+    let file = OpenOptions::new().write(true).read(true).create(true).open(lock_file_path.as_path())?;
     Ok(file)
 }
 

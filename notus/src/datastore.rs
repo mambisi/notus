@@ -1,18 +1,14 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 use crate::file_ops::{FilePair, fetch_file_pairs, create_new_file_pair, get_lock_file, ActiveFilePair};
 use std::path::{Path, PathBuf};
 use crate::schema::DataEntry;
-use anyhow::bail;
 use std::fs::File;
 use fs2::FileExt;
 use anyhow::Result;
 use crate::errors::NotusError;
-use std::sync::{RwLock, Arc, PoisonError, RwLockReadGuard, RwLockWriteGuard};
-use std::alloc::Global;
-use std::ops::{Range, RangeFrom};
-use std::collections::hash_map::RandomState;
-use dashmap::mapref::one::Ref;
-use std::cell::RefCell;
+use std::sync::{RwLock};
+use std::ops::{ RangeFrom};
+use crate::datastore::Index::Persisted;
 
 #[derive(Default, Debug, Clone)]
 pub struct KeyDirEntry {
@@ -38,7 +34,7 @@ impl KeyDirEntry {
     }
 }
 pub struct KeysDir {
-    keys: RwLock<BTreeMap<Vec<u8>, KeyDirEntry>>
+    keys: RwLock<BTreeMap<Vec<u8>, Index>>
 }
 
 impl KeysDir {
@@ -46,15 +42,15 @@ impl KeysDir {
         let mut keys_dir_writer = self.keys.write().map_err(|e| {
             NotusError::RWLockPoisonError(format!("{}", e))
         })?;
-        keys_dir_writer.insert(key, value);
+        keys_dir_writer.insert(key, Index::Persisted(value));
         Ok(())
     }
 
-    pub fn buffered(&self, key: Vec<u8>) -> Result<()> {
+    pub fn partial_insert(&self, key: Vec<u8>) -> Result<()> {
         let mut keys_dir_writer = self.keys.write().map_err(|e| {
             NotusError::RWLockPoisonError(format!("{}", e))
         })?;
-        keys_dir_writer.insert(key, value);
+        keys_dir_writer.insert(key, Index::InBuffer);
         Ok(())
     }
     pub fn remove(&self, key: &[u8]) -> Result<()> {
@@ -128,8 +124,11 @@ impl KeysDir {
             None => {
                 None
             }
-            Some(s) => {
-                Some(s.clone())
+            Some(entry) => {
+                if let Persisted(entry) = entry {
+                    return Some(entry.clone())
+                }
+                return None
             }
         }
     }
@@ -138,7 +137,7 @@ impl KeysDir {
 impl KeysDir {
     pub fn new(file_pairs: &BTreeMap<String, FilePair>) -> Result<Self> {
         let keys = RwLock::new(BTreeMap::new());
-        let mut keys_dir = Self {
+        let keys_dir = Self {
             keys
         };
         for (_, fp) in file_pairs {
@@ -188,9 +187,7 @@ impl DataStore {
             NotusError::RWLockPoisonError(format!("{}", e))
         })?;
         buffer.insert(key.clone(),value.clone());
-        let data_entry = DataEntry::new(key.clone(), value);
-        let key_dir_entry = self.active_file.write(&data_entry)?;
-        self.keys_dir.insert(key, key_dir_entry);
+        self.keys_dir.partial_insert(key);
         Ok(())
     }
 

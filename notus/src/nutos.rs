@@ -1,10 +1,8 @@
-use crate::datastore::{DataStore, KeyDirEntry};
+use crate::datastore::{DataStore};
 use std::path::{Path, PathBuf};
-use anyhow::{Result, Error};
-use std::sync::{Arc, Mutex};
-use std::alloc::Global;
-use std::fs::read;
-use std::ops::{Range, RangeFrom};
+use anyhow::{Result};
+use std::sync::{Arc};
+use std::ops::{ RangeFrom};
 use std::fmt::{Display, Formatter};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
