@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use crate::file_ops::{FilePair, fetch_file_pairs, create_new_file_pair, get_lock_file, ActiveFilePair};
 use std::path::{Path, PathBuf};
 use crate::schema::DataEntry;
@@ -7,12 +7,12 @@ use std::fs::File;
 use fs2::FileExt;
 use anyhow::Result;
 use crate::errors::NotusError;
-use std::sync::{RwLock, Arc, PoisonError, RwLockReadGuard};
+use std::sync::{RwLock, Arc, PoisonError, RwLockReadGuard, RwLockWriteGuard};
 use std::alloc::Global;
 use std::ops::{Range, RangeFrom};
-use dashmap::DashMap;
 use std::collections::hash_map::RandomState;
 use dashmap::mapref::one::Ref;
+use std::cell::RefCell;
 
 #[derive(Default, Debug, Clone)]
 pub struct KeyDirEntry {
@@ -20,6 +20,11 @@ pub struct KeyDirEntry {
     key_size: u64,
     value_size: u64,
     data_entry_position: u64,
+}
+#[derive(Debug, Clone)]
+enum Index {
+    Persisted(KeyDirEntry),
+    InBuffer
 }
 
 impl KeyDirEntry {
@@ -38,6 +43,14 @@ pub struct KeysDir {
 
 impl KeysDir {
     pub fn insert(&self, key: Vec<u8>, value: KeyDirEntry) -> Result<()> {
+        let mut keys_dir_writer = self.keys.write().map_err(|e| {
+            NotusError::RWLockPoisonError(format!("{}", e))
+        })?;
+        keys_dir_writer.insert(key, value);
+        Ok(())
+    }
+
+    pub fn buffered(&self, key: Vec<u8>) -> Result<()> {
         let mut keys_dir_writer = self.keys.write().map_err(|e| {
             NotusError::RWLockPoisonError(format!("{}", e))
         })?;
@@ -142,6 +155,7 @@ pub struct DataStore {
     active_file: ActiveFilePair,
     keys_dir: KeysDir,
     files_dir: RwLock<BTreeMap<String, FilePair>>,
+    buffer : RwLock<HashMap<Vec<u8>,Vec<u8>>>
 }
 
 impl DataStore {
@@ -156,19 +170,24 @@ impl DataStore {
             active_file: ActiveFilePair::from(active_file_pair)?,
             keys_dir,
             files_dir:RwLock::new(files_dir),
+            buffer: RwLock::new(Default::default())
         };
         instance.lock()?;
         Ok(instance)
     }
 
     fn lock(&mut self) -> Result<()> {
-        self.lock_file.try_lock_exclusive().map_err(|_| {
+        self.lock_file.lock_exclusive().map_err(|_| {
             NotusError::LockFailed(String::from(self.dir.to_string_lossy()))
         })?;
         Ok(())
     }
 
     pub fn put(&self, key: Vec<u8>, value: Vec<u8>) -> Result<()> {
+        let mut buffer = self.buffer.write().map_err(|e| {
+            NotusError::RWLockPoisonError(format!("{}", e))
+        })?;
+        buffer.insert(key.clone(),value.clone());
         let data_entry = DataEntry::new(key.clone(), value);
         let key_dir_entry = self.active_file.write(&data_entry)?;
         self.keys_dir.insert(key, key_dir_entry);
@@ -176,6 +195,13 @@ impl DataStore {
     }
 
     pub fn get(&self, key: &Vec<u8>) -> Result<Option<Vec<u8>>> {
+        let buffer = self.buffer.read().map_err(|e| {
+            NotusError::RWLockPoisonError(format!("{}", e))
+        })?;
+        if let Some(value) = buffer.get(key) {
+            return Ok(Some(value.clone()))
+        }
+
         let key_dir_entry = match self.keys_dir.get(key) {
             None => {
                 return Ok(None);
@@ -202,6 +228,10 @@ impl DataStore {
     }
 
     pub fn delete(&self, key: &Vec<u8>) -> Result<()> {
+        let mut buffer = self.buffer.write().map_err(|e| {
+            NotusError::RWLockPoisonError(format!("{}", e))
+        })?;
+        buffer.remove(key);
         self.active_file.remove(key.clone())?;
         self.keys_dir.remove(key);
         Ok(())
@@ -212,6 +242,10 @@ impl DataStore {
             self.active_file.remove(key.clone())?;
         }
         self.keys_dir.clear()?;
+        let mut buffer = self.buffer.write().map_err(|e| {
+            NotusError::RWLockPoisonError(format!("{}", e))
+        })?;
+        buffer.clear();
         Ok(())
     }
 
@@ -257,14 +291,22 @@ impl DataStore {
         Ok(())
     }
 
-    pub fn flush(&self, ) -> Result<()>{
+    pub fn flush(&self) -> Result<()>{
+        let mut buffer = self.buffer.write().map_err(|e| {
+            NotusError::RWLockPoisonError(format!("{}", e))
+        })?;
+        for (key,value) in buffer.drain() {
+            let data_entry = DataEntry::new(key.clone(), value);
+            let key_dir_entry = self.active_file.write(&data_entry)?;
+            self.keys_dir.insert(key, key_dir_entry);
+        }
         Ok(())
     }
 }
 
 impl Drop for DataStore {
     fn drop(&mut self) {
-        self.flush().unwrap();
+        self.flush();
         self.lock_file.unlock().unwrap();
     }
 }

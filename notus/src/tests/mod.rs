@@ -6,7 +6,7 @@ use log::{debug, warn};
 use anyhow::Error;
 use std::alloc::Global;
 
-const N_THREADS: usize = 1;
+const N_THREADS: usize = 10;
 const N_PER_THREAD: usize = 100;
 const N: usize = N_THREADS * N_PER_THREAD; // NB N should be multiple of N_THREADS
 const SPACE: usize = N;

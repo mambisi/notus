@@ -1,7 +1,7 @@
 use crate::datastore::{DataStore, KeyDirEntry};
 use std::path::{Path, PathBuf};
 use anyhow::{Result, Error};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::alloc::Global;
 use std::fs::read;
 use std::ops::{Range, RangeFrom};
@@ -14,6 +14,7 @@ pub struct Notus {
     dir: PathBuf,
     temp: bool,
     store: Arc<DataStore>,
+    dropped: Arc<AtomicBool>,
 }
 
 impl Display for Notus {
@@ -38,12 +39,26 @@ impl Notus {
             dir: PathBuf::from(dir.as_ref()),
             temp: false,
             store,
+            dropped: Arc::new(AtomicBool::new(false)),
         };
+        instance.start_background_workers();
         Ok(instance)
     }
 
     fn start_background_workers(&self) {
-
+        let is_dropped = self.dropped.clone();
+        let store = self.store.clone();
+        thread::spawn(move || {
+            loop {
+                let is_dropped = is_dropped.load(Ordering::Acquire);
+                if is_dropped {
+                    break;
+                }
+                store.flush();
+                thread::sleep(Duration::from_millis(1));
+            }
+            drop(store)
+        });
     }
 
     pub fn temp<P: AsRef<Path>>(dir: P) -> Result<Self> {
@@ -52,7 +67,9 @@ impl Notus {
             dir: PathBuf::from(dir.as_ref()),
             temp: true,
             store,
+            dropped: Arc::new(AtomicBool::new(false)),
         };
+        instance.start_background_workers();
         Ok(instance)
     }
     pub fn put(&self, key: Vec<u8>, value: Vec<u8>) -> Result<()> {
@@ -93,6 +110,7 @@ impl Notus {
 
 impl Drop for Notus {
     fn drop(&mut self) {
+        self.dropped.store(true, Ordering::Release);
         if self.temp {
             //fs_extra::dir::remove(self.dir.as_path());
         }
