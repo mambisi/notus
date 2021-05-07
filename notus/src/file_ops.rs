@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use anyhow::{Result};
 
 use crate::schema::{HintEntry, DataEntry, Decoder, Encoder};
-use crate::datastore::{KeyDirEntry, KeysDir};
+use crate::datastore::{KeyDirEntry, KeysDir, RawKey};
 use fs2::FileExt;
 use crate::errors::NotusError;
 
@@ -56,7 +56,8 @@ impl FilePair {
         let mut rdr = BufReader::new(hint_file);
         while let Ok(hint_entry) = HintEntry::decode(&mut rdr) {
             if hint_entry.is_deleted() {
-                keys_dir.remove(&hint_entry.key());
+                let raw_key : RawKey =  bincode::deserialize(&hint_entry.key())?;
+                keys_dir.remove( raw_key.0,&raw_key.1);
             } else {
                 let key_dir_entry = KeyDirEntry::new(
                     self.file_id.to_string(),
@@ -64,7 +65,8 @@ impl FilePair {
                     hint_entry.value_size(),
                     hint_entry.data_entry_position()
                 );
-                keys_dir.insert(hint_entry.key(), key_dir_entry);
+                let raw_key : RawKey =  bincode::deserialize(&hint_entry.key())?;
+                keys_dir.insert( raw_key.0,raw_key.1, key_dir_entry);
             }
         }
         Ok(())

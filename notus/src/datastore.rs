@@ -7,8 +7,37 @@ use fs2::FileExt;
 use anyhow::Result;
 use crate::errors::NotusError;
 use std::sync::{RwLock};
-use std::ops::{ RangeFrom};
+use std::ops::{RangeFrom};
 use crate::datastore::Index::Persisted;
+use serde::{Deserialize, Serialize};
+use std::alloc::Global;
+use bincode::ErrorKind;
+
+pub trait MergeOperator:
+Fn(&[u8], Option<&[u8]>, &[u8]) -> Option<Vec<u8>>
+{}
+
+impl<F> MergeOperator for F where
+    F: Fn(&[u8], Option<&[u8]>, &[u8]) -> Option<Vec<u8>>
+{}
+
+pub struct Column {
+    merge_operator: Box<dyn MergeOperator>
+}
+
+pub const DEFAULT_INDEX : &str = "default";
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct RawKey( pub String, pub Vec<u8>);
+
+impl RawKey {
+    fn default(key : Vec<u8>) -> Self {
+        Self {
+            0: DEFAULT_INDEX.to_string(),
+            1: key
+        }
+    }
+}
 
 #[derive(Default, Debug, Clone)]
 pub struct KeyDirEntry {
@@ -17,10 +46,11 @@ pub struct KeyDirEntry {
     value_size: u64,
     data_entry_position: u64,
 }
+
 #[derive(Debug, Clone)]
 enum Index {
     Persisted(KeyDirEntry),
-    InBuffer
+    InBuffer,
 }
 
 impl KeyDirEntry {
@@ -33,31 +63,38 @@ impl KeyDirEntry {
         }
     }
 }
+
+type MultiMap<I, K, V> = BTreeMap<I, BTreeMap<K, V>>;
+
 pub struct KeysDir {
-    keys: RwLock<BTreeMap<Vec<u8>, Index>>
+    keys: RwLock<MultiMap<String, Vec<u8>, Index>>
 }
 
 impl KeysDir {
-    pub fn insert(&self, key: Vec<u8>, value: KeyDirEntry) -> Result<()> {
+    pub fn insert(&self, index: String, key: Vec<u8>, value: KeyDirEntry) -> Result<()> {
         let mut keys_dir_writer = self.keys.write().map_err(|e| {
             NotusError::RWLockPoisonError(format!("{}", e))
         })?;
-        keys_dir_writer.insert(key, Index::Persisted(value));
+        let index = keys_dir_writer.entry(index).or_insert(BTreeMap::new());
+        index.insert(key, Index::Persisted(value));
         Ok(())
     }
 
-    pub fn partial_insert(&self, key: Vec<u8>) -> Result<()> {
+    pub fn partial_insert(&self, index: String, key: Vec<u8>) -> Result<()> {
         let mut keys_dir_writer = self.keys.write().map_err(|e| {
             NotusError::RWLockPoisonError(format!("{}", e))
         })?;
-        keys_dir_writer.insert(key, Index::InBuffer);
+        let index = keys_dir_writer.entry(index).or_insert(BTreeMap::new());
+        index.insert(key, Index::InBuffer);
         Ok(())
     }
-    pub fn remove(&self, key: &[u8]) -> Result<()> {
+    pub fn remove(&self, index: String, key: &[u8]) -> Result<()> {
         let mut keys_dir_writer = self.keys.write().map_err(|e| {
             NotusError::RWLockPoisonError(format!("{}", e))
         })?;
-        keys_dir_writer.remove(key);
+        if let Some(index) = keys_dir_writer.get_mut(&index) {
+            index.remove(key);
+        }
         Ok(())
     }
 
@@ -69,7 +106,8 @@ impl KeysDir {
         Ok(())
     }
 
-    pub fn keys(&self) -> Vec<Vec<u8>> {
+    pub fn keys(&self, index : &str) -> Vec<Vec<u8>> {
+
         let keys_dir_reader = match self.keys.read() {
             Ok(rdr) => {
                 rdr
@@ -78,12 +116,20 @@ impl KeysDir {
                 return vec![];
             }
         };
-        keys_dir_reader.iter().map(|(k, _)| {
-            k.clone()
-        }).collect()
+
+
+        if let Some(index) = keys_dir_reader.get(index) {
+            index.iter().map(|(k, _)| {
+                k.clone()
+            }).collect()
+        }
+        else {
+            vec![]
+        }
     }
 
-    pub fn range(&self, range: RangeFrom<Vec<u8>>) -> Vec<Vec<u8>> {
+    pub fn raw_keys(&self) -> Vec<Vec<u8>> {
+
         let keys_dir_reader = match self.keys.read() {
             Ok(rdr) => {
                 rdr
@@ -92,12 +138,25 @@ impl KeysDir {
                 return vec![];
             }
         };
-        keys_dir_reader.range(range).map(|(k, _)| {
-            k.clone()
-        }).collect()
+
+        let mut keys = Vec::new();
+
+        for index in  keys_dir_reader.iter() {
+            for k in index.1.keys() {
+                let raw_key = match bincode::serialize(&RawKey(index.0.clone(), k.clone())) {
+                    Ok(raw_key) => { raw_key}
+                    Err(_) => {
+                        return vec![]
+                    }
+                };
+                keys.push(raw_key);
+            }
+        }
+
+        keys
     }
 
-    pub fn prefix(&self, prefix: &Vec<u8>) -> Vec<Vec<u8>> {
+    pub fn range(&self, index : &str, range: RangeFrom<Vec<u8>>) -> Vec<Vec<u8>> {
         let keys_dir_reader = match self.keys.read() {
             Ok(rdr) => {
                 rdr
@@ -106,12 +165,38 @@ impl KeysDir {
                 return vec![];
             }
         };
-        keys_dir_reader.range(prefix.clone()..).take_while(|(k, _)| k.starts_with(prefix)).map(|(k, _)| {
-            k.clone()
-        }).collect()
+        if let Some(index) = keys_dir_reader.get(index) {
+            index.range(range).map(|(k, _)| {
+                k.clone()
+            }).collect()
+        }
+        else {
+            vec![]
+        }
+
     }
 
-    pub fn get(&self, key: &[u8]) -> Option<KeyDirEntry> {
+    pub fn prefix(&self, index : &str, prefix: &Vec<u8>) -> Vec<Vec<u8>> {
+        let keys_dir_reader = match self.keys.read() {
+            Ok(rdr) => {
+                rdr
+            }
+            Err(_) => {
+                return vec![];
+            }
+        };
+        if let Some(index) = keys_dir_reader.get(index) {
+            index.range(prefix.clone()..).take_while(|(k, _)| k.starts_with(prefix)).map(|(k, _)| {
+                k.clone()
+            }).collect()
+        }
+        else {
+            vec![]
+        }
+
+    }
+
+    pub fn get(&self, index : &str, key: &[u8]) -> Option<KeyDirEntry> {
         let keys_dir_reader = match self.keys.read() {
             Ok(rdr) => {
                 rdr
@@ -120,16 +205,22 @@ impl KeysDir {
                 return None;
             }
         };
-        match keys_dir_reader.get(key) {
-            None => {
-                None
-            }
-            Some(entry) => {
-                if let Persisted(entry) = entry {
-                    return Some(entry.clone())
+
+        if let Some(index) = keys_dir_reader.get(index) {
+            match index.get(key) {
+                None => {
+                    None
                 }
-                return None
+                Some(entry) => {
+                    if let Persisted(entry) = entry {
+                        return Some(entry.clone());
+                    }
+                    return None;
+                }
             }
+        }
+        else {
+            None
         }
     }
 }
@@ -154,7 +245,7 @@ pub struct DataStore {
     active_file: ActiveFilePair,
     keys_dir: KeysDir,
     files_dir: RwLock<BTreeMap<String, FilePair>>,
-    buffer : RwLock<HashMap<Vec<u8>,Vec<u8>>>
+    buffer: RwLock<HashMap<Vec<u8>, Vec<u8>>>,
 }
 
 impl DataStore {
@@ -168,8 +259,8 @@ impl DataStore {
             dir: dir.as_ref().to_path_buf(),
             active_file: ActiveFilePair::from(active_file_pair)?,
             keys_dir,
-            files_dir:RwLock::new(files_dir),
-            buffer: RwLock::new(Default::default())
+            files_dir: RwLock::new(files_dir),
+            buffer: RwLock::new(Default::default()),
         };
         instance.lock()?;
         Ok(instance)
@@ -182,29 +273,32 @@ impl DataStore {
         Ok(())
     }
 
-    pub fn put(&self, key: Vec<u8>, value: Vec<u8>) -> Result<()> {
+    pub fn put(&self, raw_key : RawKey, value: Vec<u8>) -> Result<()> {
         let mut buffer = self.buffer.write().map_err(|e| {
             NotusError::RWLockPoisonError(format!("{}", e))
         })?;
-        buffer.insert(key.clone(),value.clone());
-        self.keys_dir.partial_insert(key);
+        let key = bincode::serialize(&raw_key)?;
+        buffer.insert(key.clone(), value.clone());
+        self.keys_dir.partial_insert(raw_key.0, raw_key.1);
         Ok(())
     }
 
-    pub fn get(&self, key: &Vec<u8>) -> Result<Option<Vec<u8>>> {
+    pub fn get(&self, raw_key : &RawKey) -> Result<Option<Vec<u8>>> {
         let buffer = self.buffer.read().map_err(|e| {
             NotusError::RWLockPoisonError(format!("{}", e))
         })?;
-        if let Some(value) = buffer.get(key) {
-            return Ok(Some(value.clone()))
+        let key = bincode::serialize(raw_key)?;
+
+        if let Some(value) = buffer.get(&key) {
+            return Ok(Some(value.clone()));
         }
 
-        let key_dir_entry = match self.keys_dir.get(key) {
+        let key_dir_entry = match self.keys_dir.get(&raw_key.0, &raw_key.1) {
             None => {
                 return Ok(None);
             }
             Some(value) => {
-               value
+                value
             }
         };
 
@@ -224,18 +318,20 @@ impl DataStore {
         Ok(Some(data_entry.value()))
     }
 
-    pub fn delete(&self, key: &Vec<u8>) -> Result<()> {
+    pub fn delete(&self, raw_key  : &RawKey) -> Result<()> {
         let mut buffer = self.buffer.write().map_err(|e| {
             NotusError::RWLockPoisonError(format!("{}", e))
         })?;
-        buffer.remove(key);
+        let key = bincode::serialize(raw_key)?;
+
+        buffer.remove(&key);
         self.active_file.remove(key.clone())?;
-        self.keys_dir.remove(key);
+        self.keys_dir.remove(raw_key.0.clone(), &raw_key.1);
         Ok(())
     }
 
     pub fn clear(&self) -> Result<()> {
-        for key in self.keys().iter() {
+        for key in self.raw_keys().iter() {
             self.active_file.remove(key.clone())?;
         }
         self.keys_dir.clear()?;
@@ -246,16 +342,20 @@ impl DataStore {
         Ok(())
     }
 
-    pub fn keys(&self) -> Vec<Vec<u8>> {
-        self.keys_dir.keys()
+    pub fn keys(&self, column : &str,) -> Vec<Vec<u8>> {
+        self.keys_dir.keys(column)
     }
 
-    pub fn range(&self, range: RangeFrom<Vec<u8>>) -> Vec<Vec<u8>> {
-        self.keys_dir.range(range)
+    pub fn raw_keys(&self) -> Vec<Vec<u8>> {
+        self.keys_dir.raw_keys()
     }
 
-    pub fn prefix(&self, prefix: &Vec<u8>) -> Vec<Vec<u8>> {
-        self.keys_dir.prefix(prefix)
+    pub fn range(&self, column : &str, range: RangeFrom<Vec<u8>>) -> Vec<Vec<u8>> {
+        self.keys_dir.range(column, range)
+    }
+
+    pub fn prefix(&self, column : &str, prefix: &Vec<u8>) -> Vec<Vec<u8>> {
+        self.keys_dir.prefix(column, prefix)
     }
 
     pub fn merge(&self) -> anyhow::Result<()> {
@@ -272,11 +372,12 @@ impl DataStore {
             }
             let hints = fp.get_hints()?;
             for hint in hints {
-                if let Some(keys_dir_entry) = self.keys_dir.get(&hint.key()) {
+                let raw_key : RawKey = bincode::deserialize(&hint.key())?;
+                if let Some(keys_dir_entry) = self.keys_dir.get(&raw_key.0, &raw_key.1) {
                     if keys_dir_entry.file_id == fp.file_id() {
                         let data_entry = fp.read(hint.data_entry_position())?;
                         let key_entry = merged_file_pair.write(&data_entry)?;
-                        self.keys_dir.insert(hint.key(), key_entry);
+                        self.keys_dir.insert(raw_key.0, raw_key.1, key_entry);
                     }
                 }
             }
@@ -288,14 +389,15 @@ impl DataStore {
         Ok(())
     }
 
-    pub fn flush(&self) -> Result<()>{
+    pub fn flush(&self) -> Result<()> {
         let mut buffer = self.buffer.write().map_err(|e| {
             NotusError::RWLockPoisonError(format!("{}", e))
         })?;
-        for (key,value) in buffer.drain() {
+        for (key, value) in buffer.drain() {
+            let raw_key : RawKey = bincode::deserialize(&key)?;
             let data_entry = DataEntry::new(key.clone(), value);
             let key_dir_entry = self.active_file.write(&data_entry)?;
-            self.keys_dir.insert(key, key_dir_entry);
+            self.keys_dir.insert(raw_key.0, raw_key.1, key_dir_entry);
         }
         Ok(())
     }
@@ -310,15 +412,15 @@ impl Drop for DataStore {
 
 #[cfg(test)]
 mod tests {
-    use crate::datastore::DataStore;
+    use crate::datastore::{DataStore, RawKey, DEFAULT_INDEX};
     use serial_test::serial;
 
     #[test]
     #[serial]
     fn test_data_store() {
         let mut ds = DataStore::open("./testdir/_test_data_store").unwrap();
-        ds.put(vec![1, 2, 3], vec![4, 5, 6]).unwrap();
-        println!("{:#?}", ds.get(&vec![1, 2, 3]).unwrap());
+        ds.put(RawKey::default(vec![1, 2, 3]), vec![4, 5, 6]).unwrap();
+        println!("{:#?}", ds.get(&RawKey::default(vec![1, 2, 3])).unwrap());
         clean_up()
     }
 
@@ -328,25 +430,25 @@ mod tests {
         clean_up();
         {
             let mut ds = DataStore::open("./testdir/_test_data_store").unwrap();
-            ds.put(vec![1, 2, 3], vec![4, 5, 6]).unwrap();
-            ds.put(vec![3, 1, 2], vec![12, 32, 1]).unwrap();
-            ds.put(vec![3, 1, 4], vec![121, 200, 187]).unwrap();
-            ds.put(vec![1, 2, 3], vec![3, 3, 3]).unwrap();
-            println!("{:#?}", ds.keys());
+            ds.put(RawKey::default(vec![1, 2, 3]), vec![4, 5, 6]).unwrap();
+            ds.put(RawKey::default(vec![3, 1, 2]), vec![12, 32, 1]).unwrap();
+            ds.put(RawKey::default(vec![3, 1, 4]), vec![121, 200, 187]).unwrap();
+            ds.put(RawKey::default(vec![1, 2, 3]), vec![3, 3, 3]).unwrap();
+            println!("{:#?}", ds.keys(DEFAULT_INDEX));
         }
 
         {
             let mut ds = DataStore::open("./testdir/_test_data_store").unwrap();
-            ds.put(vec![1, 2, 3], vec![9, 9, 6]).unwrap();
-            ds.delete(&vec![3, 1, 2]).unwrap();
-            println!("{:?}", ds.get(&vec![1, 2, 3]));
-            println!("{:#?}", ds.keys());
+            ds.put(RawKey::default(vec![1, 2, 3]), vec![9, 9, 6]).unwrap();
+            ds.delete(&RawKey::default(vec![3, 1, 2])).unwrap();
+            println!("{:?}", ds.get(&RawKey::default(vec![1, 2, 3])));
+            println!("{:#?}", ds.keys(DEFAULT_INDEX));
         }
 
         {
             let mut ds = DataStore::open("./testdir/_test_data_store").unwrap();
-            ds.delete(&vec![1, 2, 3]).unwrap();
-            println!("{:#?}", ds.keys());
+            ds.delete(&RawKey::default(vec![1, 2, 3])).unwrap();
+            println!("{:#?}", ds.keys(DEFAULT_INDEX));
         }
 
         clean_up()
@@ -358,18 +460,18 @@ mod tests {
         clean_up();
         {
             let mut ds = DataStore::open("./testdir/_test_data_merge_store").unwrap();
-            ds.put(vec![1, 2, 3], vec![4, 5, 6]).unwrap();
-            ds.put(vec![3, 1, 2], vec![12, 32, 1]).unwrap();
-            ds.put(vec![3, 1, 4], vec![121, 200, 187]).unwrap();
-            ds.put(vec![1, 2, 3], vec![3, 3, 3]).unwrap();
+            ds.put(RawKey::default(vec![1, 2, 3]), vec![4, 5, 6]).unwrap();
+            ds.put(RawKey::default(vec![3, 1, 2]), vec![12, 32, 1]).unwrap();
+            ds.put(RawKey::default(vec![3, 1, 4]), vec![121, 200, 187]).unwrap();
+            ds.put(RawKey::default(vec![1, 2, 3]), vec![3, 3, 3]).unwrap();
         }
 
         {
             let mut ds = DataStore::open("./testdir/_test_data_merge_store").unwrap();
-            ds.put(vec![1, 2, 3], vec![4, 4, 4]).unwrap();
-            ds.put(vec![3, 1, 2], vec![12, 32, 1]).unwrap();
-            ds.put(vec![3, 1, 4], vec![12, 54, 0]).unwrap();
-            ds.put(vec![8, 27, 34], vec![3, 3, 3]).unwrap();
+            ds.put(RawKey::default(vec![1, 2, 3]), vec![4, 4, 4]).unwrap();
+            ds.put(RawKey::default(vec![3, 1, 2]), vec![12, 32, 1]).unwrap();
+            ds.put(RawKey::default(vec![3, 1, 4]), vec![12, 54, 0]).unwrap();
+            ds.put(RawKey::default(vec![8, 27, 34]), vec![3, 3, 3]).unwrap();
         }
 
         let mut keys_before_merge = vec![];
@@ -377,15 +479,15 @@ mod tests {
 
         {
             let mut ds = DataStore::open("./testdir/_test_data_merge_store").unwrap();
-            ds.put(vec![1, 2, 3], vec![9, 9, 6]).unwrap();
-            ds.delete(&vec![3, 1, 2]).unwrap();
-            keys_before_merge = ds.keys();
+            ds.put(RawKey::default(vec![1, 2, 3]), vec![9, 9, 6]).unwrap();
+            ds.delete(&RawKey::default(vec![3, 1, 2])).unwrap();
+            keys_before_merge = ds.keys(DEFAULT_INDEX);
         }
 
         {
             let mut ds = DataStore::open("./testdir/_test_data_merge_store").unwrap();
             ds.merge();
-            keys_after_merge = ds.keys();
+            keys_after_merge = ds.keys(DEFAULT_INDEX);
         }
 
         assert_eq!(keys_before_merge, keys_after_merge);
@@ -396,11 +498,11 @@ mod tests {
     #[serial]
     fn test_reopen_without_closing_error() {
         let mut ds = DataStore::open("./testdir/_test_data_merge_store").unwrap();
-        ds.put(vec![1, 2, 3], vec![4, 5, 6]).unwrap();
-        ds.put(vec![3, 1, 2], vec![12, 32, 1]).unwrap();
-        ds.put(vec![3, 1, 4], vec![121, 200, 187]).unwrap();
-        ds.put(vec![1, 2, 3], vec![3, 3, 3]).unwrap();
-        println!("{:#?}", ds.keys());
+        ds.put(RawKey::default(vec![1, 2, 3]), vec![4, 5, 6]).unwrap();
+        ds.put(RawKey::default(vec![3, 1, 2]), vec![12, 32, 1]).unwrap();
+        ds.put(RawKey::default(vec![3, 1, 4]), vec![121, 200, 187]).unwrap();
+        ds.put(RawKey::default(vec![1, 2, 3]), vec![3, 3, 3]).unwrap();
+        println!("{:#?}", ds.keys(DEFAULT_INDEX));
 
         let mut open_result = DataStore::open("./testdir/_test_data_merge_store");
         assert!(open_result.is_err());
