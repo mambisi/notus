@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::ops::{RangeFrom, RangeBounds, Range, RangeInclusive, RangeToInclusive, RangeFull, Bound};
 use std::path::{Path, PathBuf};
-use std::sync::RwLock;
+use std::sync::{RwLock, Mutex};
 use std::ops;
 
 pub trait MergeOperator: Fn(&[u8], Option<Vec<u8>>, &[u8]) -> Option<Vec<u8>> {}
@@ -235,7 +235,7 @@ pub struct DataStore {
     active_file: ActiveFilePair,
     keys_dir: KeysDir,
     files_dir: RwLock<BTreeMap<String, FilePair>>,
-    buffer: RwLock<HashMap<Vec<u8>, Vec<u8>>>,
+    lock_memory : Mutex<()>
 }
 
 impl DataStore {
@@ -250,7 +250,7 @@ impl DataStore {
             active_file: ActiveFilePair::from(active_file_pair)?,
             keys_dir,
             files_dir: RwLock::new(files_dir),
-            buffer: RwLock::new(Default::default()),
+            lock_memory: Mutex::new(())
         };
         instance.lock()?;
         Ok(instance)
@@ -264,26 +264,16 @@ impl DataStore {
     }
 
     pub fn put(&self, raw_key: RawKey, value: Vec<u8>) -> Result<()> {
-        let mut buffer = self
-            .buffer
-            .write()
-            .map_err(|e| NotusError::RWLockPoisonError(format!("{}", e)))?;
+        self.lock_memory.lock();
         let key = bincode::serialize(&raw_key)?;
-        buffer.insert(key.clone(), value.clone());
-        self.keys_dir.partial_insert(raw_key.0, raw_key.1);
+        let data_entry = DataEntry::new(key, value);
+        let key_dir_entry = self.active_file.write(&data_entry)?;
+        self.keys_dir.insert(raw_key.0, raw_key.1, key_dir_entry);
         Ok(())
     }
 
     pub fn get(&self, raw_key: &RawKey) -> Result<Option<Vec<u8>>> {
-        let buffer = self
-            .buffer
-            .read()
-            .map_err(|e| NotusError::RWLockPoisonError(format!("{}", e)))?;
-        let key = bincode::serialize(raw_key)?;
-
-        if let Some(value) = buffer.get(&key) {
-            return Ok(Some(value.clone()));
-        }
+        self.lock_memory.lock();
 
         let key_dir_entry = match self.keys_dir.get(&raw_key.0, &raw_key.1) {
             None => {
@@ -308,43 +298,25 @@ impl DataStore {
     }
 
     pub fn delete(&self, raw_key: &RawKey) -> Result<()> {
-        let mut buffer = self
-            .buffer
-            .write()
-            .map_err(|e| NotusError::RWLockPoisonError(format!("{}", e)))?;
+        self.lock_memory.lock();
         let key = bincode::serialize(raw_key)?;
-
-        buffer.remove(&key);
         self.active_file.remove(key.clone())?;
         self.keys_dir.remove(raw_key.0.clone(), &raw_key.1);
         Ok(())
     }
 
     pub fn contains(&self, raw_key: &RawKey) -> Result<bool> {
-        let mut buffer = self
-            .buffer
-            .read()
-            .map_err(|e| NotusError::RWLockPoisonError(format!("{}", e)))?;
-        let key = bincode::serialize(raw_key)?;
-
-        if buffer.contains_key(&key) {
-            return Ok(true)
-        }
-
+        self.lock_memory.lock();
         let result = self.keys_dir.contains(&raw_key.0, &raw_key.1)?;
         Ok(result)
     }
 
     pub fn clear(&self) -> Result<()> {
+        self.lock_memory.lock();
         for key in self.raw_keys().iter() {
             self.active_file.remove(key.clone())?;
         }
         self.keys_dir.clear()?;
-        let mut buffer = self
-            .buffer
-            .write()
-            .map_err(|e| NotusError::RWLockPoisonError(format!("{}", e)))?;
-        buffer.clear();
         Ok(())
     }
 
@@ -397,16 +369,6 @@ impl DataStore {
     }
 
     pub fn flush(&self) -> Result<()> {
-        let mut buffer = self
-            .buffer
-            .write()
-            .map_err(|e| NotusError::RWLockPoisonError(format!("{}", e)))?;
-        for (key, value) in buffer.drain() {
-            let raw_key: RawKey = bincode::deserialize(&key)?;
-            let data_entry = DataEntry::new(key.clone(), value);
-            let key_dir_entry = self.active_file.write(&data_entry)?;
-            self.keys_dir.insert(raw_key.0, raw_key.1, key_dir_entry);
-        }
         Ok(())
     }
 }

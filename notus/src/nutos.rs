@@ -45,19 +45,6 @@ impl Notus {
     }
 
     fn start_background_workers(&self) {
-        let is_dropped = self.dropped.clone();
-        let store = self.store.clone();
-        thread::spawn(move || {
-            loop {
-                let is_dropped = is_dropped.load(Ordering::Acquire);
-                if is_dropped {
-                    break;
-                }
-                store.flush();
-                thread::sleep(Duration::from_millis(1));
-            }
-            drop(store)
-        });
     }
 
     pub fn temp<P: AsRef<Path>>(dir: P) -> Result<Self> {
