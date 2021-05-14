@@ -4,7 +4,6 @@ use crate::file_ops::{
     create_new_file_pair, fetch_file_pairs, get_lock_file, ActiveFilePair, FilePair,
 };
 use crate::schema::DataEntry;
-use anyhow::Result;
 use bincode::ErrorKind;
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
@@ -15,6 +14,8 @@ use std::ops::{RangeFrom, RangeBounds, Range, RangeInclusive, RangeToInclusive, 
 use std::path::{Path, PathBuf};
 use std::sync::{RwLock, Mutex};
 use std::ops;
+
+use crate::Result;
 
 pub trait MergeOperator: Fn(&[u8], Option<Vec<u8>>, &[u8]) -> Option<Vec<u8>> {}
 
@@ -202,7 +203,7 @@ impl KeysDir {
         }
     }
 
-    pub fn contains(&self, index: &str, key: &[u8]) -> Result<bool, NotusError> {
+    pub fn contains(&self, index: &str, key: &[u8]) -> Result<bool> {
         let keys_dir_reader = match self.keys.read() {
             Ok(rdr) => rdr,
             Err(error) => {
@@ -336,7 +337,7 @@ impl DataStore {
         self.keys_dir.prefix(column, prefix)
     }
 
-    pub fn merge(&self) -> anyhow::Result<()> {
+    pub fn merge(&self) -> Result<()> {
         let merged_file_pair = ActiveFilePair::from(create_new_file_pair(self.dir.as_path())?)?;
         let mut mark_for_removal = Vec::new();
 

@@ -1,11 +1,10 @@
-use anyhow::Result;
 use chrono::Utc;
 use fs_extra::dir::DirOptions;
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-
+use crate::Result;
 use crate::datastore::{KeyDirEntry, KeysDir, RawKey};
 use crate::errors::NotusError;
 use crate::schema::{DataEntry, Decoder, Encoder, HintEntry};
@@ -40,7 +39,7 @@ impl FilePair {
 }
 
 impl FilePair {
-    pub fn read(&self, entry_position: u64) -> Result<DataEntry, NotusError> {
+    pub fn read(&self, entry_position: u64) -> Result<DataEntry> {
         let data_file = File::open(&self.data_file_path.as_path())?;
         let mut reader = BufReader::new(data_file);
         reader.seek(SeekFrom::Start(entry_position))?;
@@ -72,7 +71,7 @@ impl FilePair {
         Ok(())
     }
 
-    pub fn get_hints(&self) -> anyhow::Result<Vec<HintEntry>> {
+    pub fn get_hints(&self) -> Result<Vec<HintEntry>> {
         let mut hints = vec![];
         let hint_file = File::open(&self.hint_file_path.as_path())?;
         let mut rdr = BufReader::new(hint_file);
@@ -177,7 +176,7 @@ impl ActiveFilePair {
     }
 }
 
-pub fn create_new_file_pair<P: AsRef<Path>>(dir: P) -> anyhow::Result<FilePair> {
+pub fn create_new_file_pair<P: AsRef<Path>>(dir: P) -> Result<FilePair> {
     fs_extra::dir::create_all(dir.as_ref(), false)?;
     let file_name = Utc::now().timestamp_nanos().to_string();
     let mut data_file_path = PathBuf::new();
@@ -206,7 +205,7 @@ pub fn create_new_file_pair<P: AsRef<Path>>(dir: P) -> anyhow::Result<FilePair> 
     })
 }
 
-pub fn get_lock_file<P: AsRef<Path>>(dir: P) -> anyhow::Result<File> {
+pub fn get_lock_file<P: AsRef<Path>>(dir: P) -> Result<File> {
     let mut lock_file_path = PathBuf::new();
     lock_file_path.push(dir.as_ref());
     lock_file_path.push("nutos.lock");
@@ -219,7 +218,7 @@ pub fn get_lock_file<P: AsRef<Path>>(dir: P) -> anyhow::Result<File> {
     Ok(file)
 }
 
-pub fn fetch_file_pairs<P: AsRef<Path>>(dir: P) -> anyhow::Result<BTreeMap<String, FilePair>> {
+pub fn fetch_file_pairs<P: AsRef<Path>>(dir: P) -> Result<BTreeMap<String, FilePair>> {
     let mut file_pairs = BTreeMap::new();
     let mut option = DirOptions::new();
     option.depth = 1;

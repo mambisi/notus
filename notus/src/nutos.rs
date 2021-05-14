@@ -1,6 +1,6 @@
 use crate::datastore::{DataStore, MergeOperator, RawKey, DEFAULT_INDEX};
 use crate::errors::NotusError;
-use anyhow::Result;
+use crate::Result;
 use std::alloc::Global;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
@@ -103,7 +103,7 @@ impl Notus {
         column: &str,
         key: Vec<u8>,
         value: Vec<u8>,
-    ) -> Result<(), NotusError> {
+    ) -> Result<()> {
         let old_value = self.store.get(&RawKey(column.to_string(), key.clone()))?;
 
         let merged_value = merge_operator(&key, old_value, &value);
@@ -122,7 +122,7 @@ impl Notus {
         merge_operator: impl MergeOperator + 'static,
         key: Vec<u8>,
         value: Vec<u8>,
-    ) -> Result<(), NotusError> {
+    ) -> Result<()> {
         let column = DEFAULT_INDEX.to_string();
         let old_value = self.store.get(&RawKey(column.clone(), key.clone()))?;
 
