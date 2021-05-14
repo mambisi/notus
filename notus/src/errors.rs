@@ -5,6 +5,10 @@ use thiserror::Error;
 pub enum NotusError {
     #[error("io error")]
     IOError(#[from] io::Error),
+    #[error("fs extra error")]
+    FSExtraError(#[from] fs_extra::error::Error),
+    #[error("bincode error")]
+    BincodeError(#[from] bincode::Error),
     #[error("Data Corrupt")]
     CorruptValue,
     #[error("Merge failed")]
@@ -15,6 +19,4 @@ pub enum NotusError {
     RWLockPoisonError(String),
     #[error("unknown data store error")]
     Unknown,
-    #[error(transparent)]
-    Other(#[from] anyhow::Error),
 }

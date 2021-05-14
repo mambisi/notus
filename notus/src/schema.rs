@@ -1,9 +1,8 @@
-use anyhow::Result;
 use chrono::Utc;
 use crc::{Crc, CRC_32_CKSUM};
 use std::io::Read;
 pub const CRC_CKSUM: Crc<u32> = Crc::<u32>::new(&CRC_32_CKSUM);
-
+use crate::Result;
 #[derive(Debug, Clone, PartialOrd, PartialEq)]
 pub struct DataEntry {
     crc: u32,
