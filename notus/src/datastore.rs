@@ -25,7 +25,7 @@ pub struct Column {
     merge_operator: Box<dyn MergeOperator>,
 }
 
-pub const DEFAULT_INDEX: &str = "default";
+pub const DEFAULT_INDEX: &str = "_";
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct RawKey(pub String, pub Vec<u8>);
