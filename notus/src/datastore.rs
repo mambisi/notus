@@ -41,10 +41,10 @@ impl RawKey {
 
 #[derive(Default, Debug, Clone)]
 pub struct KeyDirEntry {
-    file_id: String,
-    key_size: u64,
-    value_size: u64,
-    data_entry_position: u64,
+    file_id: u32,
+    key_size: u32,
+    value_size: u32,
+    data_entry_position: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -54,7 +54,7 @@ enum Index {
 }
 
 impl KeyDirEntry {
-    pub fn new(file_id: String, key_size: u64, value_size: u64, pos: u64) -> Self {
+    pub fn new(file_id: u32, key_size: u32, value_size: u32, pos: u32) -> Self {
         KeyDirEntry {
             file_id,
             key_size,
@@ -220,7 +220,7 @@ impl KeysDir {
 }
 
 impl KeysDir {
-    pub fn new(file_pairs: &BTreeMap<String, FilePair>) -> Result<Self> {
+    pub fn new(file_pairs: &BTreeMap<u32, FilePair>) -> Result<Self> {
         let keys = RwLock::new(BTreeMap::new());
         let keys_dir = Self { keys };
         for (_, fp) in file_pairs {
@@ -235,7 +235,7 @@ pub struct DataStore {
     dir: PathBuf,
     active_file: ActiveFilePair,
     keys_dir: KeysDir,
-    files_dir: RwLock<BTreeMap<String, FilePair>>,
+    files_dir: RwLock<BTreeMap<u32, FilePair>>,
     lock_memory : Mutex<()>
 }
 
@@ -294,7 +294,7 @@ impl DataStore {
             }
             Some(fp) => fp,
         };
-        let data_entry = fp.read(key_dir_entry.data_entry_position)?;
+        let data_entry = fp.read(key_dir_entry.data_entry_position as u64)?;
         Ok(Some(data_entry.value()))
     }
 

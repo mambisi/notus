@@ -15,15 +15,15 @@ const HINT_FILE_EXTENSION: &str = "hint";
 
 #[derive(Debug, Clone)]
 pub struct FilePair {
-    file_id: String,
+    file_id: u32,
     data_file_path: PathBuf,
     hint_file_path: PathBuf,
 }
 
 impl FilePair {
-    fn new(file_id: &str) -> Self {
+    fn new(file_id: u32) -> Self {
         Self {
-            file_id: file_id.to_string(),
+            file_id,
             data_file_path: Default::default(),
             hint_file_path: Default::default(),
         }
@@ -59,10 +59,10 @@ impl FilePair {
                 keys_dir.remove(raw_key.0, &raw_key.1);
             } else {
                 let key_dir_entry = KeyDirEntry::new(
-                    self.file_id.to_string(),
-                    hint_entry.key_size(),
-                    hint_entry.value_size(),
-                    hint_entry.data_entry_position(),
+                    self.file_id,
+                    hint_entry.key_size() as u32,
+                    hint_entry.value_size() as u32,
+                    hint_entry.data_entry_position() as u32,
                 );
                 let raw_key: RawKey = bincode::deserialize(&hint_entry.key())?;
                 keys_dir.insert(raw_key.0, raw_key.1, key_dir_entry);
@@ -81,7 +81,7 @@ impl FilePair {
         Ok(hints)
     }
 
-    pub fn file_id(&self) -> String {
+    pub fn file_id(&self) -> u32 {
         self.file_id.to_owned()
     }
 }
@@ -119,8 +119,8 @@ impl ActiveFilePair {
         Ok(())
     }
 
-    pub fn file_id(&self) -> String {
-        self.file_pair.file_id.to_owned()
+    pub fn file_id(&self) -> u32 {
+        self.file_pair.file_id
     }
 }
 
@@ -156,10 +156,10 @@ impl ActiveFilePair {
         self.hint_file.unlock()?;
 
         Ok(KeyDirEntry::new(
-            self.file_pair.file_id.to_string(),
-            hint_entry.key_size(),
-            hint_entry.value_size(),
-            data_entry_position,
+            self.file_pair.file_id,
+            hint_entry.key_size() as u32,
+            hint_entry.value_size() as u32,
+            data_entry_position as u32,
         ))
     }
 
@@ -178,7 +178,7 @@ impl ActiveFilePair {
 
 pub fn create_new_file_pair<P: AsRef<Path>>(dir: P) -> Result<FilePair> {
     fs_extra::dir::create_all(dir.as_ref(), false)?;
-    let file_name = Utc::now().timestamp_nanos().to_string();
+    let file_name = Utc::now().timestamp_subsec_millis();
     let mut data_file_path = PathBuf::new();
     data_file_path.push(dir.as_ref());
     data_file_path.push(format!("{}.{}", file_name, DATA_FILE_EXTENSION));
@@ -218,7 +218,7 @@ pub fn get_lock_file<P: AsRef<Path>>(dir: P) -> Result<File> {
     Ok(file)
 }
 
-pub fn fetch_file_pairs<P: AsRef<Path>>(dir: P) -> Result<BTreeMap<String, FilePair>> {
+pub fn fetch_file_pairs<P: AsRef<Path>>(dir: P) -> Result<BTreeMap<u32, FilePair>> {
     let mut file_pairs = BTreeMap::new();
     let mut option = DirOptions::new();
     option.depth = 1;
@@ -239,8 +239,8 @@ pub fn fetch_file_pairs<P: AsRef<Path>>(dir: P) -> Result<BTreeMap<String, FileP
         let file_name = String::from(file_path.file_name().unwrap().to_string_lossy());
         let file_name = &file_name[..file_name.len() - 5];
         let file_pair = file_pairs
-            .entry(file_name.to_owned())
-            .or_insert(FilePair::new(file_name));
+            .entry(file_name.parse::<u32>().unwrap())
+            .or_insert(FilePair::new(file_name.parse::<u32>().unwrap()));
         match file_extension.as_str() {
             DATA_FILE_EXTENSION => file_pair.data_file_path = file_path.to_path_buf(),
             HINT_FILE_EXTENSION => file_pair.hint_file_path = file_path.to_path_buf(),
