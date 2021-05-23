@@ -42,9 +42,9 @@ impl RawKey {
 #[derive(Default, Debug, Clone)]
 pub struct KeyDirEntry {
     file_id: u32,
-    key_size: u32,
-    value_size: u32,
-    data_entry_position: u32,
+    key_size: u64,
+    value_size: u64,
+    data_entry_position: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -54,7 +54,7 @@ enum Index {
 }
 
 impl KeyDirEntry {
-    pub fn new(file_id: u32, key_size: u32, value_size: u32, pos: u32) -> Self {
+    pub fn new(file_id: u32, key_size: u64, value_size: u64, pos: u64) -> Self {
         KeyDirEntry {
             file_id,
             key_size,
