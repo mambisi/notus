@@ -1,28 +1,24 @@
 use crate::schema::DataEntry;
 use chrono::{DateTime, Utc};
-use bumpalo::{Bump, collections::Vec};
 
 #[derive(Debug,Clone)]
-pub struct MemTableEntry<'a> {
-    pub key: Vec<'a,u8>,
-    pub value: Option<Vec<'a,u8>>,
+pub struct MemTableEntry {
+    pub key: Vec<u8>,
+    pub value: Option<Vec<u8>>,
     pub tombstone: bool,
     pub timestamp: i64,
 }
 
 #[derive(Debug)]
-pub struct MemTable<'a> {
-    bump : Bump,
-    entries: Vec<'a, MemTableEntry<'a>>,
+pub struct MemTable {
+    entries: Vec<MemTableEntry>,
     size: usize,
 }
 
-impl<'a> MemTable<'a> {
+impl MemTable {
     pub fn new() -> Self {
-        let bump = Bump::with_capacity(10 * 1024 * 1024);
         Self {
-            bump,
-            entries: Vec::new_in(&bump),
+            entries: vec![],
             size: 0,
         }
     }
@@ -32,26 +28,20 @@ impl<'a> MemTable<'a> {
     }
 }
 
-impl<'a> MemTable<'a> {
+impl MemTable {
     fn get_index(&self, key: &[u8]) -> Result<usize, usize> {
         self.entries.binary_search_by_key(&key, |entry| entry.key.as_slice())
     }
 }
 
-impl<'a> MemTable<'a> {
+impl MemTable {
     pub fn insert(&mut self, key: &[u8], value: &[u8]) {
-        let mut entry_key = Vec::new_in(&self.bump);
-        entry_key.copy_from_slice(key);
-
-        let mut entry_value = Vec::new_in(&self.bump);
-        entry_value.copy_from_slice(value);
-
-        let entry = self.bump.alloc(MemTableEntry{
-            key: entry_key,
-            value: Some(entry_value),
+        let entry = MemTableEntry{
+            key: key.to_vec(),
+            value: Some(value.to_vec()),
             tombstone: false,
             timestamp: Utc::now().timestamp(),
-        });
+        };
 
         match self.get_index(key) {
             Ok(index) => {
@@ -72,11 +62,9 @@ impl<'a> MemTable<'a> {
     }
 
     pub fn remove(&mut self, key: &[u8]) {
-        let mut entry_key = Vec::new_in(&self.bump);
-        entry_key.copy_from_slice(key);
 
         let entry = MemTableEntry {
-            key: entry_key,
+            key: key.to_vec(),
             value: None,
             timestamp: Utc::now().timestamp(),
             tombstone: true,
