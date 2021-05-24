@@ -12,3 +12,4 @@ pub type Result<T> = std::result::Result<T, NotusError>;
 
 #[cfg(test)]
 mod tests;
+mod memtable;
