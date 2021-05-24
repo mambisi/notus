@@ -101,21 +101,16 @@ mod tests {
     fn test_memtable() {
         let mut memtable = MemTable::new();
 
-        for i in 0..100_u32 {
+        for i in 0..100000_u32 {
             memtable.insert(&i.to_be_bytes().to_vec(), &i.to_be_bytes().to_vec())
         }
 
-        for i in 0..100_u32 {
+        for i in 0..100000_u32 {
             let entry = memtable.get(&i.to_be_bytes().to_vec()).unwrap();
             let mut raw_value : [u8; 4] = [0;4];
             raw_value.copy_from_slice(entry.value.as_ref().unwrap());
             let j = u32::from_be_bytes(raw_value);
             assert_eq!(i,j)
-        }
-        println!("{}", memtable.size());
-
-        for i in 0..50_u32 {
-            memtable.remove(&i.to_be_bytes().to_vec())
         }
 
         println!("{}", memtable.size())
