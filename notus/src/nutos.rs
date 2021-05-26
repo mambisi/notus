@@ -145,6 +145,10 @@ impl Notus {
         self.store.get(&RawKey(column.to_string(), key.clone()))
     }
 
+    pub fn keys(&self, column: &str) -> Vec<Vec<u8>> {
+        self.store.keys(column)
+    }
+
     pub fn contains_cf(&self,  column: &str, key: &Vec<u8>) -> Result<bool> {
         if key.is_empty() {
             return Ok(false);
