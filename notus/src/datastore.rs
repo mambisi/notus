@@ -1,4 +1,3 @@
-use crate::datastore::Index::Persisted;
 use crate::errors::NotusError;
 use crate::file_ops::{
     create_new_file_pair, fetch_file_pairs, get_lock_file, ActiveFilePair, FilePair,
@@ -43,12 +42,6 @@ impl RawKey {
 pub struct KeyDirEntry {
     file_id: u32,
     data_entry_position: u32,
-}
-
-#[derive(Debug, Clone)]
-enum Index {
-    Persisted(KeyDirEntry),
-    InBuffer,
 }
 
 impl KeyDirEntry {
