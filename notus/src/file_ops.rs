@@ -55,15 +55,13 @@ impl FilePair {
         let mut rdr = BufReader::new(hint_file);
         while let Ok(hint_entry) = HintEntry::decode(&mut rdr) {
             if hint_entry.is_deleted() {
-                let raw_key: RawKey = bincode::deserialize(&hint_entry.key())?;
-                keys_dir.remove(raw_key.0, &raw_key.1);
+                keys_dir.remove(&hint_entry.key());
             } else {
                 let key_dir_entry = KeyDirEntry::new(
                     self.file_id,
                     hint_entry.key_size() as u32,
                 );
-                let raw_key: RawKey = bincode::deserialize(&hint_entry.key())?;
-                keys_dir.insert(raw_key.0, raw_key.1, key_dir_entry);
+                keys_dir.insert(hint_entry.key(), key_dir_entry);
             }
         }
         Ok(())

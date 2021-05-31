@@ -57,14 +57,14 @@ impl Notus {
     }
     pub fn put(&self, key: Vec<u8>, value: Vec<u8>) -> Result<()> {
         self.store
-            .put(RawKey(DEFAULT_INDEX.to_string(), key), value)
+            .put(key, value)
     }
     pub fn get(&self, key: &Vec<u8>) -> Result<Option<Vec<u8>>> {
         if key.is_empty() {
             return Ok(None);
         }
         self.store
-            .get(&RawKey(DEFAULT_INDEX.to_string(), key.clone()))
+            .get(key)
     }
 
     pub fn contains(&self, key: &Vec<u8>) -> Result<bool> {
@@ -80,7 +80,7 @@ impl Notus {
             return Ok(());
         }
         self.store
-            .delete(&RawKey(DEFAULT_INDEX.to_string(), key.clone()))
+            .delete(key)
     }
 
     pub fn compact(&self) -> Result<()> {
@@ -91,37 +91,13 @@ impl Notus {
         self.store.clear()
     }
 
-    pub fn put_cf(&self, column: &str, key: Vec<u8>, value: Vec<u8>) -> Result<()> {
-        self.store.put(RawKey(column.to_string(), key), value)
-    }
-    pub fn merge_cf(
-        &self,
-        merge_operator: impl MergeOperator + 'static,
-        column: &str,
-        key: Vec<u8>,
-        value: Vec<u8>,
-    ) -> Result<()> {
-        let old_value = self.store.get(&RawKey(column.to_string(), key.clone()))?;
-
-        let merged_value = merge_operator(&key, old_value, &value);
-        match merged_value {
-            None => {
-                self.delete_cf(column, &key);
-            }
-            Some(value) => {
-                self.put_cf(column, key, value);
-            }
-        }
-        Ok(())
-    }
     pub fn merge(
         &self,
         merge_operator: impl MergeOperator + 'static,
         key: Vec<u8>,
         value: Vec<u8>,
     ) -> Result<()> {
-        let column = DEFAULT_INDEX.to_string();
-        let old_value = self.store.get(&RawKey(column.clone(), key.clone()))?;
+        let old_value = self.store.get(&key)?;
 
         let merged_value = merge_operator(&key, old_value, &value);
 
@@ -135,54 +111,21 @@ impl Notus {
         }
         Ok(())
     }
-    pub fn get_cf(&self, column: &str, key: &Vec<u8>) -> Result<Option<Vec<u8>>> {
-        if key.is_empty() {
-            return Ok(None);
-        }
-        self.store.get(&RawKey(column.to_string(), key.clone()))
-    }
 
-    pub fn keys(&self, column: &str) -> Vec<Vec<u8>> {
-        self.store.keys(column)
-    }
-
-    pub fn contains_cf(&self,  column: &str, key: &Vec<u8>) -> Result<bool> {
-        if key.is_empty() {
-            return Ok(false);
-        }
-        self.store
-            .contains(&RawKey(column.to_string(), key.clone()))
-    }
-
-    pub fn delete_cf(&self, column: &str, key: &Vec<u8>) -> Result<()> {
-        if key.is_empty() {
-            return Ok(());
-        }
-        self.store.delete(&RawKey(column.to_string(), key.clone()))
-    }
-
-    pub fn range_cf<R>(&self, column: &str, range : R) -> DBIterator where R : RangeBounds<[u8]>{
-        DBIterator::range(column, self.store.clone(), range)
-    }
-
-    pub fn prefix_cf(&self, column: &str, prefix: &Vec<u8>) -> DBIterator {
-        DBIterator::prefix(column, self.store.clone(), prefix)
-    }
-
-    pub fn iter_cf(&self, column: &str) -> DBIterator {
-        DBIterator::new(column, self.store.clone())
+    pub fn keys(&self) -> Vec<Vec<u8>> {
+        self.store.keys()
     }
 
     pub fn iter(&self) -> DBIterator {
-        DBIterator::new(DEFAULT_INDEX, self.store.clone())
+        DBIterator::new(self.store.clone())
     }
 
     pub fn range<R>(&self, range :R) -> DBIterator where R : RangeBounds<[u8]> {
-        DBIterator::range(DEFAULT_INDEX, self.store.clone(), range)
+        DBIterator::range(self.store.clone(), range)
     }
 
     pub fn prefix(&self, prefix: &Vec<u8>) -> DBIterator {
-        DBIterator::prefix(DEFAULT_INDEX, self.store.clone(), prefix)
+        DBIterator::prefix(self.store.clone(), prefix)
     }
 }
 
@@ -192,37 +135,33 @@ impl Drop for Notus {
 }
 
 pub struct DBIterator {
-    column: String,
     store: Arc<DataStore>,
     inner: Vec<Vec<u8>>,
     cursor: usize,
 }
 
 impl DBIterator {
-    fn new(column: &str, store: Arc<DataStore>) -> Self {
-        let keys = store.keys(column);
+    fn new( store: Arc<DataStore>) -> Self {
+        let keys = store.keys();
         Self {
-            column: column.to_string(),
             store,
             inner: keys,
             cursor: 0,
         }
     }
 
-    fn range<R>(column: &str, store: Arc<DataStore>, range : R) -> Self where  R : RangeBounds<[u8]> {
-        let keys = store.range(column, range);
+    fn range<R>(store: Arc<DataStore>, range : R) -> Self where  R : RangeBounds<[u8]> {
+        let keys = store.range(range);
         Self {
-            column: column.to_string(),
             store,
             inner: keys,
             cursor: 0,
         }
     }
 
-    fn prefix(column: &str, store: Arc<DataStore>, prefix: &Vec<u8>) -> Self {
-        let keys = store.prefix(column, prefix);
+    fn prefix(store: Arc<DataStore>, prefix: &Vec<u8>) -> Self {
+        let keys = store.prefix(prefix);
         Self {
-            column: column.to_string(),
             store,
             inner: keys,
             cursor: 0,
@@ -240,7 +179,7 @@ impl Iterator for DBIterator {
             }
             Some(key) => key,
         };
-        match self.store.get(&RawKey(self.column.clone(), key.clone())) {
+        match self.store.get(key) {
             Ok(Some(value)) => {
                 self.cursor += 1;
                 Some(Ok((key.clone(), value)))
@@ -271,7 +210,7 @@ impl DoubleEndedIterator for DBIterator {
             Some(key) => key,
         };
 
-        match self.store.get(&RawKey(self.column.clone(), key.clone())) {
+        match self.store.get(key) {
             Ok(Some(value)) => {
                 self.cursor += 1;
                 Some(Ok((key.clone(), value)))
