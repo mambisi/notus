@@ -63,7 +63,7 @@ impl KeyDirEntry {
 type MultiMap<I, K, V> = BTreeMap<I, BTreeMap<K, V>>;
 
 pub struct KeysDir {
-    keys: RwLock<MultiMap<String, Box<[u8]>, Index>>,
+    keys: RwLock<MultiMap<String, Box<[u8]>, KeyDirEntry>>,
 }
 
 impl KeysDir {
@@ -73,19 +73,10 @@ impl KeysDir {
             .write()
             .map_err(|e| NotusError::RWLockPoisonError(format!("{}", e)))?;
         let index = keys_dir_writer.entry(index).or_insert(BTreeMap::new());
-        index.insert(key.into_boxed_slice(), Index::Persisted(value));
+        index.insert(key.into_boxed_slice(), value);
         Ok(())
     }
 
-    pub fn partial_insert(&self, index: String, key: Vec<u8>) -> Result<()> {
-        let mut keys_dir_writer = self
-            .keys
-            .write()
-            .map_err(|e| NotusError::RWLockPoisonError(format!("{}", e)))?;
-        let index = keys_dir_writer.entry(index).or_insert(BTreeMap::new());
-        index.insert(key.into_boxed_slice(), Index::InBuffer);
-        Ok(())
-    }
     pub fn remove(&self, index: String, key: &[u8]) -> Result<()> {
         let mut keys_dir_writer = self
             .keys
@@ -189,10 +180,7 @@ impl KeysDir {
             match index.get(key) {
                 None => None,
                 Some(entry) => {
-                    if let Persisted(entry) = entry {
-                        return Some(entry.clone());
-                    }
-                    return None;
+                    return Some(entry.clone())
                 }
             }
         } else {
