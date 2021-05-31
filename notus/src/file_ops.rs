@@ -61,8 +61,6 @@ impl FilePair {
                 let key_dir_entry = KeyDirEntry::new(
                     self.file_id,
                     hint_entry.key_size() as u32,
-                    hint_entry.value_size() as u32,
-                    hint_entry.data_entry_position() as u32,
                 );
                 let raw_key: RawKey = bincode::deserialize(&hint_entry.key())?;
                 keys_dir.insert(raw_key.0, raw_key.1, key_dir_entry);
@@ -158,8 +156,6 @@ impl ActiveFilePair {
         Ok(KeyDirEntry::new(
             self.file_pair.file_id,
             hint_entry.key_size() as u32,
-            hint_entry.value_size() as u32,
-            data_entry_position as u32,
         ))
     }
 

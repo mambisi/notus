@@ -15,7 +15,6 @@ pub struct Notus {
     dir: PathBuf,
     temp: bool,
     store: Arc<DataStore>,
-    dropped: Arc<AtomicBool>,
 }
 
 impl Display for Notus {
@@ -38,7 +37,6 @@ impl Notus {
             dir: PathBuf::from(dir.as_ref()),
             temp: false,
             store,
-            dropped: Arc::new(AtomicBool::new(false)),
         };
         instance.start_background_workers();
         Ok(instance)
@@ -53,7 +51,6 @@ impl Notus {
             dir: PathBuf::from(dir.as_ref()),
             temp: true,
             store,
-            dropped: Arc::new(AtomicBool::new(false)),
         };
         instance.start_background_workers();
         Ok(instance)
@@ -164,7 +161,7 @@ impl Notus {
         self.store.delete(&RawKey(column.to_string(), key.clone()))
     }
 
-    pub fn range_cf<R>(&self, column: &str, range : R) -> DBIterator where R : RangeBounds<Vec<u8>>{
+    pub fn range_cf<R>(&self, column: &str, range : R) -> DBIterator where R : RangeBounds<[u8]>{
         DBIterator::range(column, self.store.clone(), range)
     }
 
@@ -180,7 +177,7 @@ impl Notus {
         DBIterator::new(DEFAULT_INDEX, self.store.clone())
     }
 
-    pub fn range<R>(&self, range :R) -> DBIterator where R : RangeBounds<Vec<u8>> {
+    pub fn range<R>(&self, range :R) -> DBIterator where R : RangeBounds<[u8]> {
         DBIterator::range(DEFAULT_INDEX, self.store.clone(), range)
     }
 
@@ -191,10 +188,6 @@ impl Notus {
 
 impl Drop for Notus {
     fn drop(&mut self) {
-        self.dropped.store(true, Ordering::Release);
-        if self.temp {
-            //fs_extra::dir::remove(self.dir.as_path());
-        }
     }
 }
 
@@ -216,7 +209,7 @@ impl DBIterator {
         }
     }
 
-    fn range<R>(column: &str, store: Arc<DataStore>, range : R) -> Self where  R : RangeBounds<Vec<u8>> {
+    fn range<R>(column: &str, store: Arc<DataStore>, range : R) -> Self where  R : RangeBounds<[u8]> {
         let keys = store.range(column, range);
         Self {
             column: column.to_string(),

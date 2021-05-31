@@ -1,4 +1,4 @@
-mod common;
+/*mod common;
 
 use crate::nutos::Notus;
 use log::{debug, warn};
@@ -257,3 +257,4 @@ fn test_merge_operator() {
     db.merge(concatenate_merge, k.to_vec(), vec![4]);
     assert_eq!(db.get(&k.to_vec()).unwrap().unwrap(), vec![4]);
 }
+*/

@@ -42,8 +42,6 @@ impl RawKey {
 #[derive(Default, Debug, Clone)]
 pub struct KeyDirEntry {
     file_id: u32,
-    key_size: u32,
-    value_size: u32,
     data_entry_position: u32,
 }
 
@@ -54,11 +52,9 @@ enum Index {
 }
 
 impl KeyDirEntry {
-    pub fn new(file_id: u32, key_size: u32, value_size: u32, pos: u32) -> Self {
+    pub fn new(file_id: u32, pos: u32) -> Self {
         KeyDirEntry {
             file_id,
-            key_size,
-            value_size,
             data_entry_position: pos,
         }
     }
@@ -67,7 +63,7 @@ impl KeyDirEntry {
 type MultiMap<I, K, V> = BTreeMap<I, BTreeMap<K, V>>;
 
 pub struct KeysDir {
-    keys: RwLock<MultiMap<String, Vec<u8>, Index>>,
+    keys: RwLock<MultiMap<String, Box<[u8]>, Index>>,
 }
 
 impl KeysDir {
@@ -77,7 +73,7 @@ impl KeysDir {
             .write()
             .map_err(|e| NotusError::RWLockPoisonError(format!("{}", e)))?;
         let index = keys_dir_writer.entry(index).or_insert(BTreeMap::new());
-        index.insert(key, Index::Persisted(value));
+        index.insert(key.into_boxed_slice(), Index::Persisted(value));
         Ok(())
     }
 
@@ -87,7 +83,7 @@ impl KeysDir {
             .write()
             .map_err(|e| NotusError::RWLockPoisonError(format!("{}", e)))?;
         let index = keys_dir_writer.entry(index).or_insert(BTreeMap::new());
-        index.insert(key, Index::InBuffer);
+        index.insert(key.into_boxed_slice(), Index::InBuffer);
         Ok(())
     }
     pub fn remove(&self, index: String, key: &[u8]) -> Result<()> {
@@ -119,7 +115,7 @@ impl KeysDir {
         };
 
         if let Some(index) = keys_dir_reader.get(index) {
-            index.iter().map(|(k, _)| k.clone()).collect()
+            index.iter().map(|(k, _)| k.to_vec()).collect()
         } else {
             vec![]
         }
@@ -137,7 +133,7 @@ impl KeysDir {
 
         for index in keys_dir_reader.iter() {
             for k in index.1.keys() {
-                let raw_key = match bincode::serialize(&RawKey(index.0.clone(), k.clone())) {
+                let raw_key = match bincode::serialize(&RawKey(index.0.clone(), k.to_vec())) {
                     Ok(raw_key) => raw_key,
                     Err(_) => return vec![],
                 };
@@ -148,7 +144,8 @@ impl KeysDir {
         keys
     }
 
-    pub fn range<R>(&self, index: &str, range : R) -> Vec<Vec<u8>> where R : RangeBounds<Vec<u8>> {
+    pub fn range<R>(&self, index: &str, range : R) -> Vec<Vec<u8>> where R : RangeBounds<[u8]> {
+
         let keys_dir_reader = match self.keys.read() {
             Ok(rdr) => rdr,
             Err(_) => {
@@ -156,7 +153,7 @@ impl KeysDir {
             }
         };
         if let Some(index) = keys_dir_reader.get(index) {
-            index.range(range).map(|(k, _)| k.clone()).collect()
+            index.range(range).map(|(k, _)| k.to_vec()).collect()
         } else {
             vec![]
         }
@@ -171,9 +168,9 @@ impl KeysDir {
         };
         if let Some(index) = keys_dir_reader.get(index) {
             index
-                .range(prefix.clone()..)
-                .take_while(|(k, _)| k.starts_with(prefix))
-                .map(|(k, _)| k.clone())
+                .range(prefix.clone().into_boxed_slice()..)
+                .take_while(|(k, _)| k.starts_with(&prefix))
+                .map(|(k, _)| k.to_vec())
                 .collect()
         } else {
             vec![]
@@ -329,7 +326,7 @@ impl DataStore {
         self.keys_dir.raw_keys()
     }
 
-    pub fn range<R>(&self, column: &str, range : R) -> Vec<Vec<u8>>  where R: RangeBounds<Vec<u8>>{
+    pub fn range<R>(&self, column: &str, range : R) -> Vec<Vec<u8>>  where R: RangeBounds<[u8]>{
         self.keys_dir.range(column, range)
     }
 
