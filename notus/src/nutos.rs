@@ -120,7 +120,7 @@ impl Notus {
         DBIterator::new(self.store.clone())
     }
 
-    pub fn range<R>(&self, range :R) -> DBIterator where R : RangeBounds<[u8]> {
+    pub fn range<R>(&self, range :R) -> DBIterator where R : RangeBounds<Box<[u8]>> {
         DBIterator::range(self.store.clone(), range)
     }
 
@@ -150,7 +150,7 @@ impl DBIterator {
         }
     }
 
-    fn range<R>(store: Arc<DataStore>, range : R) -> Self where  R : RangeBounds<[u8]> {
+    fn range<R>(store: Arc<DataStore>, range : R) -> Self where  R : RangeBounds<Box<[u8]>> {
         let keys = store.range(range);
         Self {
             store,

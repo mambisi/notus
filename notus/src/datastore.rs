@@ -101,7 +101,7 @@ impl KeysDir {
     }
 
 
-    pub fn range<R>(&self, range: R) -> Vec<Vec<u8>> where R: RangeBounds<[u8]> {
+    pub fn range<R>(&self, range: R) -> Vec<Vec<u8>> where R: RangeBounds<Box<[u8]>> {
         let keys_dir_reader = match self.keys.read() {
             Ok(rdr) => rdr,
             Err(_) => {
@@ -257,7 +257,7 @@ impl DataStore {
         self.keys_dir.keys()
     }
 
-    pub fn range<R>(&self,range: R) -> Vec<Vec<u8>> where R: RangeBounds<[u8]> {
+    pub fn range<R>(&self,range: R) -> Vec<Vec<u8>> where R: RangeBounds<Box<[u8]>> {
         self.keys_dir.range(range)
     }
 
