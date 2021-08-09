@@ -9,7 +9,7 @@ use crate::datastore::{KeyDirEntry, KeysDir, RawKey};
 use crate::errors::NotusError;
 use crate::schema::{DataEntry, Decoder, Encoder, HintEntry};
 use fs2::FileExt;
-
+use std::os::unix::fs::OpenOptionsExt;
 const DATA_FILE_EXTENSION: &str = "data";
 const HINT_FILE_EXTENSION: &str = "hint";
 
@@ -189,14 +189,23 @@ pub fn create_new_file_pair<P: AsRef<Path>>(dir: P) -> Result<FilePair> {
     hint_file_path.push(format!("{}.{}", file_name, HINT_FILE_EXTENSION));
     hint_file_path.set_extension(HINT_FILE_EXTENSION);
 
-    OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(data_file_path.as_path())?;
-    OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(hint_file_path.as_path())?;
+    {
+        let mut options = OpenOptions::new();
+
+        options.create_new(true).write(true);
+        if cfg!(unix) {
+            options.custom_flags(libc::O_DIRECT);
+        };
+        options.open(data_file_path.as_path())?;
+    }
+    {
+        let mut options = OpenOptions::new();
+        options.create_new(true).write(true);
+        if cfg!(unix) {
+            options.custom_flags(libc::O_DIRECT);
+        }
+        options.open(hint_file_path.as_path())?;
+    }
 
     Ok(FilePair {
         data_file_path,
