@@ -49,12 +49,12 @@ impl Notus {
         let store = self.store.clone();
         thread::spawn(move || {
             loop {
+                thread::sleep(Duration::from_millis(10));
                 let is_dropped = is_dropped.load(Ordering::Acquire);
                 if is_dropped {
                     break;
                 }
                 store.flush();
-                thread::sleep(Duration::from_millis(1));
             }
             drop(store)
         });

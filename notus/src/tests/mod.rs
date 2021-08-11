@@ -66,6 +66,15 @@ fn monotonic_inserts() {
 }
 
 #[test]
+fn get_set() {
+    clean_up("_test_monotonic_inserts");
+    let db = Notus::temp("./testdir/_test_monotonic_inserts").unwrap();
+    let column = "hello";
+    db.put_cf(column, vec![2,3,4], vec![12,23,45]);
+    println!("{:?}",  db.get_cf(column, &vec![2,3,4]));
+}
+
+#[test]
 fn tree_big_keys_iterator() {
     clean_up("_test_tree_big_keys_iterator");
     fn kv(i: usize) -> Vec<u8> {
