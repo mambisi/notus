@@ -3,8 +3,7 @@ use crate::errors::NotusError;
 use crate::file_ops::{
     create_new_file_pair, fetch_file_pairs, get_lock_file, ActiveFilePair, FilePair,
 };
-use crate::schema::DataEntry;
-use bincode::ErrorKind;
+use crate::schema::{DataEntry, Encoder, Decoder};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use std::alloc::Global;
@@ -16,6 +15,7 @@ use std::sync::RwLock;
 use std::ops;
 
 use crate::Result;
+use std::io::{Read, Cursor};
 
 pub trait MergeOperator: Fn(&[u8], Option<Vec<u8>>, &[u8]) -> Option<Vec<u8>> {}
 
@@ -25,7 +25,7 @@ pub struct Column {
     merge_operator: Box<dyn MergeOperator>,
 }
 
-pub const DEFAULT_INDEX: &str = "default";
+pub const DEFAULT_INDEX: &str = "$0";
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct RawKey(pub String, pub Vec<u8>);
@@ -36,6 +36,42 @@ impl RawKey {
             0: DEFAULT_INDEX.to_string(),
             1: key,
         }
+    }
+}
+
+impl Encoder for RawKey {
+    fn encode(&self) -> Vec<u8> {
+        let mut encoded_bytes = Vec::with_capacity(8 + (self.0.len() + self.1.len()));
+        let key_size = (self.1.len() as u32).to_be_bytes();
+        let column_size = (self.0.len() as u32).to_be_bytes();
+
+
+        encoded_bytes.extend_from_slice(&column_size);
+        encoded_bytes.extend_from_slice(&key_size);
+        encoded_bytes.extend_from_slice(self.0.as_bytes());
+        encoded_bytes.extend_from_slice(&self.1);
+        encoded_bytes.shrink_to_fit();
+        encoded_bytes
+    }
+}
+
+impl Decoder for RawKey {
+    fn decode<R: Read>(rdr: &mut R) -> Result<Self> where Self: Sized {
+        let mut raw_key_size = [0_u8; 4];
+        let mut raw_column_size = [0_u8; 4];
+
+        rdr.read_exact(&mut raw_column_size)?;
+        rdr.read_exact(&mut raw_key_size)?;
+
+        let key_size = u32::from_be_bytes(raw_key_size);
+        let column_size = u32::from_be_bytes(raw_key_size);
+
+        let mut column = Vec::with_capacity(column_size as usize);
+        let mut key = Vec::with_capacity(key_size as usize);
+        rdr.read_exact(&mut column)?;
+        rdr.read_exact(&mut key)?;
+
+        Ok(Self(String::from_utf8(column)?, key))
     }
 }
 
@@ -137,10 +173,7 @@ impl KeysDir {
 
         for index in keys_dir_reader.iter() {
             for k in index.1.keys() {
-                let raw_key = match bincode::serialize(&RawKey(index.0.clone(), k.clone())) {
-                    Ok(raw_key) => raw_key,
-                    Err(_) => return vec![],
-                };
+                let raw_key = RawKey(index.0.clone(), k.clone()).encode();
                 keys.push(raw_key);
             }
         }
@@ -269,7 +302,7 @@ impl DataStore {
             .buffer
             .write()
             .map_err(|e| NotusError::RWLockPoisonError(format!("{}", e)))?;
-        let key = bincode::serialize(&raw_key)?;
+        let key = raw_key.encode();
         buffer.insert(key.clone(), value.clone());
         self.keys_dir.partial_insert(raw_key.0, raw_key.1);
         Ok(())
@@ -280,7 +313,7 @@ impl DataStore {
             .buffer
             .read()
             .map_err(|e| NotusError::RWLockPoisonError(format!("{}", e)))?;
-        let key = bincode::serialize(raw_key)?;
+        let key =  raw_key.encode();;
 
         if let Some(value) = buffer.get(&key) {
             return Ok(Some(value.clone()));
@@ -313,7 +346,7 @@ impl DataStore {
             .buffer
             .write()
             .map_err(|e| NotusError::RWLockPoisonError(format!("{}", e)))?;
-        let key = bincode::serialize(raw_key)?;
+        let key =  raw_key.encode();
 
         buffer.remove(&key);
         self.active_file.remove(key.clone())?;
@@ -326,7 +359,7 @@ impl DataStore {
             .buffer
             .read()
             .map_err(|e| NotusError::RWLockPoisonError(format!("{}", e)))?;
-        let key = bincode::serialize(raw_key)?;
+        let key =  raw_key.encode();;
 
         if buffer.contains_key(&key) {
             return Ok(true)
@@ -380,7 +413,8 @@ impl DataStore {
             }
             let hints = fp.get_hints()?;
             for hint in hints {
-                let raw_key: RawKey = bincode::deserialize(&hint.key())?;
+                let mut reader = Cursor::new(hint.key());
+                let raw_key: RawKey = RawKey::decode( &mut reader)?;
                 if let Some(keys_dir_entry) = self.keys_dir.get(&raw_key.0, &raw_key.1) {
                     if keys_dir_entry.file_id == fp.file_id() {
                         let data_entry = fp.read(hint.data_entry_position())?;
@@ -403,7 +437,8 @@ impl DataStore {
             .write()
             .map_err(|e| NotusError::RWLockPoisonError(format!("{}", e)))?;
         for (key, value) in buffer.drain() {
-            let raw_key: RawKey = bincode::deserialize(&key)?;
+            let mut reader = Cursor::new(&key);
+            let raw_key: RawKey = RawKey::decode( &mut reader)?;
             let data_entry = DataEntry::new(key.clone(), value);
             let key_dir_entry = self.active_file.write(&data_entry)?;
             self.keys_dir.insert(raw_key.0, raw_key.1, key_dir_entry);

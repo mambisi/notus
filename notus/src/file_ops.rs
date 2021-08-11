@@ -2,7 +2,7 @@ use chrono::Utc;
 use fs_extra::dir::DirOptions;
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
-use std::io::{BufReader, BufWriter, Seek, SeekFrom, Write};
+use std::io::{BufReader, BufWriter, Seek, SeekFrom, Write, Cursor};
 use std::path::{Path, PathBuf};
 use crate::Result;
 use crate::datastore::{KeyDirEntry, KeysDir, RawKey};
@@ -55,7 +55,8 @@ impl FilePair {
         let mut rdr = BufReader::new(hint_file);
         while let Ok(hint_entry) = HintEntry::decode(&mut rdr) {
             if hint_entry.is_deleted() {
-                let raw_key: RawKey = bincode::deserialize(&hint_entry.key())?;
+                let mut reader = Cursor::new(hint_entry.key());
+                let raw_key: RawKey = RawKey::decode( &mut reader)?;
                 keys_dir.remove(raw_key.0, &raw_key.1);
             } else {
                 let key_dir_entry = KeyDirEntry::new(
@@ -64,7 +65,8 @@ impl FilePair {
                     hint_entry.value_size(),
                     hint_entry.data_entry_position(),
                 );
-                let raw_key: RawKey = bincode::deserialize(&hint_entry.key())?;
+                let mut reader = Cursor::new(hint_entry.key());
+                let raw_key: RawKey = RawKey::decode( &mut reader)?;
                 keys_dir.insert(raw_key.0, raw_key.1, key_dir_entry);
             }
         }

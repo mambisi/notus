@@ -1,7 +1,6 @@
 mod common;
 
 use crate::nutos::Notus;
-use anyhow::Error;
 use log::{debug, warn};
 use std::alloc::Global;
 use std::sync::Arc;
