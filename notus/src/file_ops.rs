@@ -55,9 +55,7 @@ impl FilePair {
         let mut rdr = BufReader::new(hint_file);
         while let Ok(hint_entry) = HintEntry::decode(&mut rdr) {
             if hint_entry.is_deleted() {
-                let mut reader = Cursor::new(hint_entry.key());
-                let raw_key: RawKey = RawKey::decode( &mut reader)?;
-                keys_dir.remove(raw_key.0, &raw_key.1);
+                keys_dir.remove(&hint_entry.key());
             } else {
                 let key_dir_entry = KeyDirEntry::new(
                     self.file_id.to_string(),
@@ -65,9 +63,7 @@ impl FilePair {
                     hint_entry.value_size(),
                     hint_entry.data_entry_position(),
                 );
-                let mut reader = Cursor::new(hint_entry.key());
-                let raw_key: RawKey = RawKey::decode( &mut reader)?;
-                keys_dir.insert(raw_key.0, raw_key.1, key_dir_entry);
+                keys_dir.insert(hint_entry.key(), key_dir_entry);
             }
         }
         Ok(())

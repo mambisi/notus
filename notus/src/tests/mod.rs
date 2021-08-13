@@ -70,8 +70,15 @@ fn get_set() {
     clean_up("_test_monotonic_inserts");
     let db = Notus::temp("./testdir/_test_monotonic_inserts").unwrap();
     let column = "hello";
-    db.put_cf(column, vec![2,3,4], vec![12,23,45]);
-    println!("{:?}",  db.get_cf(column, &vec![2,3,4]));
+    db.put(vec![2,3,4], vec![12,23,45]);
+    db.put(vec![22,3,4], vec![12,23,45]);
+    db.put(vec![2,36,4], vec![12,23,45]);
+    db.put(vec![2,3,4], vec![12,23,45]);
+    db.put(vec![12,3,42], vec![12,23,45]);
+    db.put(vec![2,9,4], vec![2,9,4]);
+    println!("{:?}",  db.get(&vec![2,3,4]));
+    println!("{:?}",  db.get(&vec![12,3,42]));
+    println!("{:?}",  db.get(&vec![12,3,42]));
 }
 
 #[test]
